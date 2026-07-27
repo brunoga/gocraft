@@ -47,6 +47,10 @@ type BlockRender struct {
 	stat Stat
 
 	item *Mesh
+
+	// aoEnabled toggles ambient occlusion at runtime via a shader uniform, so
+	// no re-meshing is needed. AO data stays baked in the vertex buffers.
+	aoEnabled bool
 }
 
 func NewBlockRender() (*BlockRender, error) {
@@ -59,7 +63,8 @@ func NewBlockRender() (*BlockRender, error) {
 	}
 
 	r := &BlockRender{
-		sigch: make(chan struct{}, 4),
+		sigch:     make(chan struct{}, 4),
+		aoEnabled: true,
 	}
 
 	mainthread.Call(func() {
@@ -67,10 +72,12 @@ func NewBlockRender() (*BlockRender, error) {
 			glhf.Attr{Name: "pos", Type: glhf.Vec3},
 			glhf.Attr{Name: "tex", Type: glhf.Vec2},
 			glhf.Attr{Name: "normal", Type: glhf.Vec3},
+			glhf.Attr{Name: "ao", Type: glhf.Float},
 		}, glhf.AttrFormat{
 			glhf.Attr{Name: "matrix", Type: glhf.Mat4},
 			glhf.Attr{Name: "camera", Type: glhf.Vec3},
 			glhf.Attr{Name: "fogdis", Type: glhf.Float},
+			glhf.Attr{Name: "aoflag", Type: glhf.Float},
 		}, blockVertexSource, blockFragmentSource)
 
 		if err != nil {
@@ -109,7 +116,12 @@ func (r *BlockRender) addChunkMesh(c *Chunk, onmainthread bool) {
 		if IsPlant(game.world.Block(id)) {
 			facedata = makePlantData(facedata, show, id, tex.Texture(w))
 		} else {
-			facedata = makeCubeData(facedata, show, id, tex.Texture(w))
+			// occ samples whether the neighbouring block at the given offset
+			// occludes ambient light, used to compute per-vertex AO.
+			occ := func(dx, dy, dz int) bool {
+				return aoOccludes(game.world.Block(Vec3{id.X + dx, id.Y + dy, id.Z + dz}))
+			}
+			facedata = makeCubeData(facedata, show, id, tex.Texture(w), occ)
 		}
 	})
 	n := len(facedata) / (r.shader.VertexFormat().Size() / 4)
@@ -141,7 +153,8 @@ func (r *BlockRender) UpdateItem(w int) {
 	if IsPlant(w) {
 		vertices = makePlantData(vertices, show, pos, texture)
 	} else {
-		vertices = makeCubeData(vertices, show, pos, texture)
+		// The HUD preview has no world neighbours, so nothing occludes it.
+		vertices = makeCubeData(vertices, show, pos, texture, aoOpen)
 	}
 	item := NewMesh(r.shader, vertices)
 	if r.item != nil {
@@ -365,6 +378,21 @@ func (r *BlockRender) UpdateLoop() {
 	}
 }
 
+// ToggleAO enables or disables ambient occlusion at runtime and reports the new
+// state. It only flips a flag read as a shader uniform each frame, so it takes
+// effect immediately without rebuilding any chunk meshes.
+func (r *BlockRender) ToggleAO() bool {
+	r.aoEnabled = !r.aoEnabled
+	return r.aoEnabled
+}
+
+func b2f(b bool) float32 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func (r *BlockRender) drawChunks() {
 	r.forcePlayerChunks()
 	r.checkChunks()
@@ -373,6 +401,7 @@ func (r *BlockRender) drawChunks() {
 	r.shader.SetUniformAttr(0, mat)
 	r.shader.SetUniformAttr(1, game.camera.Pos())
 	r.shader.SetUniformAttr(2, float32(*renderRadius)*ChunkWidth)
+	r.shader.SetUniformAttr(3, b2f(r.aoEnabled))
 
 	planes := frustumPlanes(&mat)
 	r.stat = Stat{}
