@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	_ "image/png"
@@ -37,6 +38,7 @@ type Game struct {
 	lineRender   *LineRender
 	playerRender *PlayerRender
 	skyRender    *SkyRender
+	smokeRender  *SmokeRender
 
 	world   *World
 	itemidx int
@@ -45,6 +47,13 @@ type Game struct {
 
 	fireSim      *FireSim
 	lastFireTick float64
+
+	// Particle smoke rising from fires and torches. smokeSources is refreshed
+	// on a throttled cadence (scanning nearby chunks is not free) and reused as
+	// the emitter set every frame.
+	smoke         *SmokeSystem
+	smokeSources  []mgl32.Vec3
+	lastSmokeScan float64
 
 	exclusiveMouse bool
 	closed         bool
@@ -92,6 +101,7 @@ func NewGame(w, h int) (*Game, error) {
 	game = new(Game)
 	game.item = availableItems[0]
 	game.fireSim = newFireSim(time.Now().UnixNano())
+	game.smoke = newSmokeSystem(time.Now().UnixNano())
 
 	mainthread.Call(func() {
 		win := initGL(w, h)
@@ -122,6 +132,10 @@ func NewGame(w, h int) (*Game, error) {
 	if err != nil {
 		return nil, err
 	}
+	game.smokeRender, err = NewSmokeRender()
+	if err != nil {
+		return nil, err
+	}
 	go game.blockRender.UpdateLoop()
 	go game.syncPlayerLoop()
 	return game, nil
@@ -145,6 +159,44 @@ func (g *Game) setSimBlock(pos Vec3, tp int) {
 	}
 	g.world.setBlockTransient(pos, old, tp)
 	g.dirtyBlock(pos)
+}
+
+// smokeScanTick is how often the smoke emitter set is rebuilt. Scanning nearby
+// chunks for torches is not free, so it runs on this slower cadence, not every
+// frame; the cached sources drive the per-frame particle sim in between.
+const smokeScanTick = 0.4
+
+// refreshSmokeSources rebuilds the list of smoke emitters: every active fire
+// cell (positions are exact and free from the fire sim) plus every torch in the
+// chunks around the player. It reuses the backing array to avoid allocating on
+// each refresh.
+func (g *Game) refreshSmokeSources() {
+	src := g.smokeSources[:0]
+	for p := range g.fireSim.fires {
+		src = append(src, mgl32.Vec3{float32(p.X) + 0.5, float32(p.Y) + 0.9, float32(p.Z) + 0.5})
+	}
+	cid := NearBlock(g.camera.Pos()).Chunkid()
+	for dx := -1; dx <= 1; dx++ {
+		for dz := -1; dz <= 1; dz++ {
+			ch := g.world.peekChunk(Vec3{cid.X + dx, 0, cid.Z + dz})
+			if ch == nil {
+				continue
+			}
+			ch.RangeBlocks(func(id Vec3, w int) {
+				if isTorch(w) {
+					src = append(src, mgl32.Vec3{float32(id.X) + 0.5, float32(id.Y) + 0.7, float32(id.Z) + 0.5})
+				}
+			})
+		}
+	}
+	g.smokeSources = src
+}
+
+// smokeScale returns the perspective point-size factor for the current viewport:
+// a world size multiplied by this and divided by clip-w gives a pixel size.
+func (g *Game) smokeScale() float32 {
+	_, h := g.win.GetSize()
+	return float32(h) / (2 * float32(math.Tan(float64(radian(45))/2)))
 }
 
 func (g *Game) dirtyBlock(id Vec3) {
@@ -383,6 +435,14 @@ func (g *Game) Update() {
 			g.lastFireTick = now
 		}
 
+		// Smoke: refresh the emitter set on a throttled cadence, then advance the
+		// particle simulation every frame using the cached sources.
+		if now-g.lastSmokeScan > smokeScanTick {
+			g.refreshSmokeSources()
+			g.lastSmokeScan = now
+		}
+		g.smoke.Step(g.smokeSources, float32(dt))
+
 		// Clear to the horizon sky colour (a fallback under the sky pass) so the
 		// horizon matches the time of day.
 		sky := gameClock.SkyColor(now)
@@ -400,6 +460,9 @@ func (g *Game) Update() {
 		g.blockRender.Draw()
 		g.lineRender.Draw()
 		g.playerRender.Draw()
+
+		// Smoke blends over the terrain and players, so it draws last.
+		g.smokeRender.Draw(g.smoke, g.blockRender.get3dmat(), g.smokeScale(), gameClock.Daylight(now))
 
 		g.renderStat()
 

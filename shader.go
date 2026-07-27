@@ -32,6 +32,12 @@ var (
 
 	//go:embed sky_common.glsl
 	skyCommonSource string
+
+	//go:embed smoke.vert
+	smokeVertexSource string
+
+	//go:embed smoke.frag
+	smokeFragmentSource string
 )
 
 // withSkyCommon injects the shared sky-colour function (skyBackground) into a

@@ -15,6 +15,7 @@ A Minecraft like game written in go, just for fun!
 - Rendered sky: a gradient sky (horizon to zenith, with a warm glow on the sun's side at dawn and dusk) plus sun and moon discs that track across the sky as time passes.
 - Torches: place a torch (the first item in the hotbar) to light up caves and dark rooms. Torch light spreads from the torch, dims with distance, and glows even at night.
 - Fire: place fire (the second item in the hotbar) on or next to wood, leaves, or plants and watch it spread to nearby fuel, cast its own flickering block light, and burn itself out to air once the fuel is gone. Fire on non-flammable surroundings simply dies out.
+- Smoke: fires and torches give off rising smoke — a GPU particle system of soft puffs that drift, grow, and fade as they climb, dimming at night with the rest of the world.
 
 ## Dependencies
 
