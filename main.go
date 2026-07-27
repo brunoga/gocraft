@@ -197,6 +197,9 @@ func (g *Game) onKeyCallback(win *glfw.Window, key glfw.Key, scancode int, actio
 }
 
 func (g *Game) handleKeyInput(dt float64) {
+	// Capture the position before movement so collision can be resolved along
+	// the whole path this frame, not just at the destination.
+	from := g.camera.Pos()
 	speed := float32(0.1)
 	if g.camera.flying {
 		speed = 0.2
@@ -229,7 +232,7 @@ func (g *Game) handleKeyInput(dt float64) {
 		pos = mgl32.Vec3{pos.X(), pos.Y() + g.vy*float32(dt), pos.Z()}
 	}
 
-	pos, stop = g.world.Collide(pos)
+	pos, stop = g.world.CollideStepped(from, pos)
 	if stop {
 		g.vy = 0
 	}
