@@ -59,15 +59,19 @@ func TestSmokeRenders(t *testing.T) {
 	const scale = 40
 
 	// A grid of mid-life particles (frac ~0.2 -> nearly opaque, moderate size).
+	// A dense, overlapping cluster (several depth layers) so the soft per-particle
+	// alpha accumulates into solid coverage, as it does over a real plume.
 	seed := func() *SmokeSystem {
 		s := newSmokeSystem(1)
-		for x := -1.0; x <= 1.0; x += 0.5 {
-			for y := -1.0; y <= 1.0; y += 0.5 {
-				s.particles = append(s.particles, smokeParticle{
-					pos:  mgl32.Vec3{float32(x), float32(y), 0},
-					life: 1,
-					age:  0.2,
-				})
+		for z := -0.3; z <= 0.3; z += 0.3 {
+			for x := -1.0; x <= 1.0; x += 0.25 {
+				for y := -1.0; y <= 1.0; y += 0.25 {
+					s.particles = append(s.particles, smokeParticle{
+						pos:  mgl32.Vec3{float32(x), float32(y), float32(z)},
+						life: 1,
+						age:  0.2,
+					})
+				}
 			}
 		}
 		return s
@@ -79,7 +83,7 @@ func TestSmokeRenders(t *testing.T) {
 		gl.ClearColor(0, 0, 0, 1)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		r.Draw(sys, matrix, scale, daylight)
+		r.Draw(sys.appendPoints(nil), matrix, scale, daylight)
 		gl.Finish()
 
 		buf := make([]uint8, smokeW*smokeH*4)

@@ -8,16 +8,28 @@ import (
 )
 
 const (
-	smokeMaxParticles = 3000 // hard cap on live particles
-	smokeSpawnPerSec  = 10.0 // particles emitted per source per second
-	smokeLife         = 3.2  // seconds a particle lives
-	smokeRise         = 1.5  // upward speed (blocks/sec)
-	smokeRiseAccel    = 0.4  // extra upward acceleration over the particle's life
-	smokeDrift        = 0.5  // horizontal drift amplitude (blocks/sec)
-	smokeStartSize    = 0.20 // billboard size (blocks) at birth
-	smokeEndSize      = 1.7  // billboard size (blocks) at death
-	smokeSpawnJitter  = 0.18 // random horizontal offset around a source at birth
+	smokeMaxParticles = 4000 // hard cap on live particles
+	smokeSpawnPerSec  = 22.0 // particles emitted per source per second
+	smokeLife         = 3.6  // seconds a particle lives
+	smokeRise         = 1.4  // upward speed (blocks/sec)
+	smokeRiseAccel    = 0.35 // extra upward acceleration over the particle's life
+	smokeDrift        = 0.55 // horizontal drift amplitude (blocks/sec)
+	smokeStartSize    = 0.35 // billboard size (blocks) at birth
+	smokeEndSize      = 2.1  // billboard size (blocks) at death
+	smokeSpawnJitter  = 0.22 // random horizontal offset around a source at birth
+	smokePeakAlpha    = 0.32 // opacity of a fully-faded-in particle (soft, so
+	//                           many overlapping puffs build a plume)
 )
+
+// smokePoint is one renderable puff: a world-space centre, a billboard size in
+// blocks, and an opacity. Both smoke systems (rising particles and the
+// volumetric density grid) emit these, so they share one GL renderer and can be
+// compared fairly.
+type smokePoint struct {
+	pos   mgl32.Vec3
+	size  float32
+	alpha float32
+}
 
 // smokeParticle is a single rising smoke puff. seed decorrelates its drift and
 // size wobble from its neighbours so a cluster does not move in lockstep.
@@ -113,6 +125,18 @@ func (s *SmokeSystem) spawn(sources []mgl32.Vec3, dt float32) {
 
 // count reports the number of live particles (for tests/diagnostics).
 func (s *SmokeSystem) count() int { return len(s.particles) }
+
+// appendPoints appends the live particles to dst as renderable puffs, computing
+// each one's current size (grows over its life) and opacity (fades in then out).
+func (s *SmokeSystem) appendPoints(dst []smokePoint) []smokePoint {
+	for i := range s.particles {
+		p := &s.particles[i]
+		frac := p.age / p.life
+		size := smokeStartSize + (smokeEndSize-smokeStartSize)*frac
+		dst = append(dst, smokePoint{p.pos, size, smokeFade(frac) * smokePeakAlpha})
+	}
+	return dst
+}
 
 // smokeFade maps a particle's life fraction (0..1) to its opacity: smoke fades
 // in quickly from nothing, holds, then fades out as it dissipates.
