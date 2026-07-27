@@ -2,6 +2,7 @@
 
 in vec2 Tex;
 in float AO;
+in float Light;
 uniform sampler2D tex;
 
 out vec4 FragColor;
@@ -11,7 +12,7 @@ void main() {
     if (color == vec3(1,0,1)) {
         discard;
     }
-    // AO is always 1 for the avatar; referencing it keeps the shared vertex
-    // attribute active so the vertex stride matches the block geometry.
-    FragColor = vec4(color * AO, 1);
+    // AO and Light are always 1 for the avatar; referencing them keeps the
+    // shared vertex attributes active so the stride matches the block geometry.
+    FragColor = vec4(color * AO * Light, 1);
 }

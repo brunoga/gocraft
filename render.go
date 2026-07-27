@@ -73,6 +73,7 @@ func NewBlockRender() (*BlockRender, error) {
 			glhf.Attr{Name: "tex", Type: glhf.Vec2},
 			glhf.Attr{Name: "normal", Type: glhf.Vec3},
 			glhf.Attr{Name: "ao", Type: glhf.Float},
+			glhf.Attr{Name: "light", Type: glhf.Float},
 		}, glhf.AttrFormat{
 			glhf.Attr{Name: "matrix", Type: glhf.Mat4},
 			glhf.Attr{Name: "camera", Type: glhf.Vec3},
@@ -101,6 +102,10 @@ func NewBlockRender() (*BlockRender, error) {
 func (r *BlockRender) addChunkMesh(c *Chunk, onmainthread bool) {
 	facedata := r.facePool.Get().([]float32)
 
+	// Hold lightMu while sampling per-voxel light so we don't race with edits or
+	// other chunks' light updates. Only the CPU face-building is under the lock;
+	// the GL upload in build() runs after it is released.
+	game.world.lightMu.Lock()
 	c.RangeBlocks(func(id Vec3, w int) {
 		if w == 0 {
 			log.Panicf("unexpect 0 item type on %v", id)
@@ -113,17 +118,22 @@ func (r *BlockRender) addChunkMesh(c *Chunk, onmainthread bool) {
 			IsTransparent(game.world.Block(id.Front())),
 			IsTransparent(game.world.Block(id.Back())),
 		}
+		// lightAt returns the skylight (0..1) of the neighbouring air cell.
+		lightAt := func(dx, dy, dz int) float32 {
+			return float32(game.world.light(Vec3{id.X + dx, id.Y + dy, id.Z + dz})) / float32(MaxLight)
+		}
 		if IsPlant(game.world.Block(id)) {
-			facedata = makePlantData(facedata, show, id, tex.Texture(w))
+			facedata = makePlantData(facedata, show, id, tex.Texture(w), lightAt)
 		} else {
 			// occ samples whether the neighbouring block at the given offset
 			// occludes ambient light, used to compute per-vertex AO.
 			occ := func(dx, dy, dz int) bool {
 				return aoOccludes(game.world.Block(Vec3{id.X + dx, id.Y + dy, id.Z + dz}))
 			}
-			facedata = makeCubeData(facedata, show, id, tex.Texture(w), occ)
+			facedata = makeCubeData(facedata, show, id, tex.Texture(w), occ, lightAt)
 		}
 	})
+	game.world.lightMu.Unlock()
 	n := len(facedata) / (r.shader.VertexFormat().Size() / 4)
 	log.Printf("chunk faces:%d", n/6)
 	// build consumes facedata (NewMesh copies it into a GL buffer) and only
@@ -151,10 +161,11 @@ func (r *BlockRender) UpdateItem(w int) {
 	show := [...]bool{true, true, true, true, true, true}
 	pos := Vec3{0, 0, 0}
 	if IsPlant(w) {
-		vertices = makePlantData(vertices, show, pos, texture)
+		vertices = makePlantData(vertices, show, pos, texture, lightFull)
 	} else {
-		// The HUD preview has no world neighbours, so nothing occludes it.
-		vertices = makeCubeData(vertices, show, pos, texture, aoOpen)
+		// The HUD preview has no world neighbours: nothing occludes it and it is
+		// fully lit.
+		vertices = makeCubeData(vertices, show, pos, texture, aoOpen, lightFull)
 	}
 	item := NewMesh(r.shader, vertices)
 	if r.item != nil {
@@ -247,6 +258,14 @@ func (r *BlockRender) sortChunks(chunks []Vec3) []Vec3 {
 }
 
 func (r *BlockRender) updateMeshCache() {
+	// Chunks whose light changed (from edits or neighbour loads) must be
+	// re-meshed; mark their cached meshes dirty so the pass below rebuilds them.
+	for _, id := range game.world.DrainLightDirty() {
+		if mesh, ok := r.meshcache.Load(id); ok {
+			mesh.(*Mesh).Dirty = true
+		}
+	}
+
 	block := NearBlock(game.camera.Pos())
 	chunk := block.Chunkid()
 	x, z := chunk.X, chunk.Z
