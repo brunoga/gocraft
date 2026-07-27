@@ -171,9 +171,11 @@ const smokeScanTick = 0.4
 // chunks around the player. It reuses the backing array to avoid allocating on
 // each refresh.
 func (g *Game) refreshSmokeSources() {
+	// A block at (X,Y,Z) is centred on (X,Y,Z) in world space (it spans
+	// X-0.5..X+0.5), so smoke rises from the block centre, not a corner.
 	src := g.smokeSources[:0]
 	for p := range g.fireSim.fires {
-		src = append(src, mgl32.Vec3{float32(p.X) + 0.5, float32(p.Y) + 0.9, float32(p.Z) + 0.5})
+		src = append(src, mgl32.Vec3{float32(p.X), float32(p.Y) + 0.3, float32(p.Z)})
 	}
 	cid := NearBlock(g.camera.Pos()).Chunkid()
 	for dx := -1; dx <= 1; dx++ {
@@ -184,7 +186,9 @@ func (g *Game) refreshSmokeSources() {
 			}
 			ch.RangeBlocks(func(id Vec3, w int) {
 				if isTorch(w) {
-					src = append(src, mgl32.Vec3{float32(id.X) + 0.5, float32(id.Y) + 0.7, float32(id.Z) + 0.5})
+					// Smoke leaves the ember, which leans out on a wall torch.
+					ox, oz := torchOffsetAt(w, 0.2)
+					src = append(src, mgl32.Vec3{float32(id.X) + ox, float32(id.Y) + 0.35, float32(id.Z) + oz})
 				}
 			})
 		}
@@ -197,6 +201,20 @@ func (g *Game) refreshSmokeSources() {
 func (g *Game) smokeScale() float32 {
 	_, h := g.win.GetSize()
 	return float32(h) / (2 * float32(math.Tan(float64(radian(45))/2)))
+}
+
+// removeAttachedTorches removes any torch mounted on the block at p (an upright
+// torch sitting on top of it, or a wall torch hanging on one of its sides), now
+// that p is gone. It checks only the cells that could hold such a torch.
+func (g *Game) removeAttachedTorches(p Vec3) {
+	for _, n := range []Vec3{p.Up(), p.Left(), p.Right(), p.Front(), p.Back()} {
+		tp := g.world.Block(n)
+		if isTorch(tp) && torchSupport(n, tp) == p {
+			g.world.UpdateBlock(n, 0)
+			g.dirtyBlock(n)
+			go ClientUpdateBlock(n, 0)
+		}
+	}
 }
 
 func (g *Game) dirtyBlock(id Vec3) {
@@ -225,9 +243,15 @@ func (g *Game) onMouseButtonCallback(win *glfw.Window, button glfw.MouseButton, 
 				// Fire is a transient simulated block, not a persisted one.
 				g.fireSim.ignite(*prev, g.setSimBlock)
 			} else {
-				g.world.UpdateBlock(*prev, g.item)
+				tp := g.item
+				if isTorch(tp) && block != nil {
+					// Torches mount to the clicked surface: a wall gives a leaning
+					// wall torch, a floor an upright one.
+					tp = orientTorch(*block, *prev)
+				}
+				g.world.UpdateBlock(*prev, tp)
 				g.dirtyBlock(*prev)
-				go ClientUpdateBlock(*prev, g.item)
+				go ClientUpdateBlock(*prev, tp)
 			}
 		}
 	}
@@ -236,6 +260,8 @@ func (g *Game) onMouseButtonCallback(win *glfw.Window, button glfw.MouseButton, 
 			g.world.UpdateBlock(*block, 0)
 			g.dirtyBlock(*block)
 			go ClientUpdateBlock(*block, 0)
+			// A removed block no longer supports any torch attached to it.
+			g.removeAttachedTorches(*block)
 		}
 	}
 }

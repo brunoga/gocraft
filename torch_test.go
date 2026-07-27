@@ -2,6 +2,44 @@ package main
 
 import "testing"
 
+// TestTorchOrientation checks that a torch mounts correctly to the clicked
+// surface and reports the right supporting block, so removing that block can
+// remove the torch.
+func TestTorchOrientation(t *testing.T) {
+	wall := Vec3{5, 10, 5}
+	cases := []struct {
+		cell Vec3
+		want int
+	}{
+		{Vec3{6, 10, 5}, blockTorchXp}, // torch on the +X side of the wall
+		{Vec3{4, 10, 5}, blockTorchXn},
+		{Vec3{5, 10, 6}, blockTorchZp},
+		{Vec3{5, 10, 4}, blockTorchZn},
+		{Vec3{5, 11, 5}, blockTorch}, // torch on top of a floor block -> upright
+	}
+	for _, c := range cases {
+		got := orientTorch(wall, c.cell)
+		if got != c.want {
+			t.Errorf("orientTorch(%v,%v)=%d want %d", wall, c.cell, got, c.want)
+		}
+		if !isTorch(got) {
+			t.Errorf("orientTorch produced non-torch type %d", got)
+		}
+		if blockEmission(got) != torchLight {
+			t.Errorf("torch variant %d should emit torchLight, got %d", got, blockEmission(got))
+		}
+		// The torch's support is the wall it hangs on (or the floor below an
+		// upright one) -- exactly the block whose removal should drop it.
+		wantSup := wall
+		if got == blockTorch {
+			wantSup = c.cell.Down()
+		}
+		if sup := torchSupport(c.cell, got); sup != wantSup {
+			t.Errorf("torchSupport(%v,%d)=%v want %v", c.cell, got, sup, wantSup)
+		}
+	}
+}
+
 // TestTorchBlockLight places a torch in a sealed room and checks that its block
 // light fills the room, attenuates, is stopped by solid walls, and vanishes when
 // the torch is removed.
