@@ -432,12 +432,71 @@ func run() {
 	}
 
 	game.camera.Restore(store.GetPlayerState())
+	game.preload()
 	tick := time.Tick(time.Second / 60)
 	for !game.ShouldClose() {
 		<-tick
 		game.Update()
 	}
 	store.UpdatePlayerState(game.camera.State())
+}
+
+// preload builds every chunk within the render radius of the spawn point before
+// gameplay starts, showing a progress bar, so the world appears complete on the
+// first frame instead of popping in a few chunks at a time.
+func (g *Game) preload() {
+	needed := neededChunks()
+	total := len(needed)
+	if total == 0 {
+		return
+	}
+	// Cap the wait so a failing chunk fetch (e.g. a dead server) can't hang the
+	// game on the loading screen forever.
+	start := glfw.GetTime()
+	deadline := start + 30
+	for {
+		loaded := g.blockRender.meshedCount(needed)
+		g.drawLoading(float64(loaded) / float64(total))
+		if loaded >= total || glfw.GetTime() > deadline {
+			log.Printf("preloaded %d/%d chunks in %.1fs", loaded, total, glfw.GetTime()-start)
+			break
+		}
+		g.blockRender.checkChunks() // nudge the background loader
+		if g.win.ShouldClose() {
+			g.closed = true
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	mainthread.Call(func() { g.win.SetTitle("gocraft") })
+}
+
+// drawLoading renders the loading screen: a dark background with a centred
+// progress bar (0..1). It uses only glClear + glScissor, so it needs no shader.
+func (g *Game) drawLoading(progress float64) {
+	mainthread.Call(func() {
+		w, h := g.win.GetFramebufferSize()
+		gl.Disable(gl.SCISSOR_TEST)
+		gl.ClearColor(0.05, 0.06, 0.09, 1)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+		barW, barH := w/3, 16
+		x, y := (w-barW)/2, h/2-barH/2
+		gl.Enable(gl.SCISSOR_TEST)
+		// Bar frame.
+		gl.Scissor(int32(x-2), int32(y-2), int32(barW+4), int32(barH+4))
+		gl.ClearColor(0.24, 0.27, 0.32, 1)
+		gl.Clear(gl.COLOR_BUFFER_BIT)
+		// Fill proportional to progress.
+		gl.Scissor(int32(x), int32(y), int32(float64(barW)*progress), int32(barH))
+		gl.ClearColor(0.55, 0.78, 0.55, 1)
+		gl.Clear(gl.COLOR_BUFFER_BIT)
+		gl.Disable(gl.SCISSOR_TEST)
+
+		g.win.SetTitle(fmt.Sprintf("gocraft - loading %d%%", int(progress*100)))
+		g.win.SwapBuffers()
+		glfw.PollEvents()
+	})
 }
 
 func main() {

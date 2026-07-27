@@ -108,6 +108,7 @@ func (r *BlockRender) addChunkMesh(c *Chunk, onmainthread bool) {
 	// other chunks' light updates. Only the CPU face-building is under the lock;
 	// the GL upload in build() runs after it is released.
 	game.world.lightMu.Lock()
+	game.world.resetLightCache()
 	c.RangeBlocks(func(id Vec3, w int) {
 		if w == 0 {
 			log.Panicf("unexpect 0 item type on %v", id)
@@ -259,6 +260,35 @@ func (r *BlockRender) sortChunks(chunks []Vec3) []Vec3 {
 	return chunks
 }
 
+// neededChunks returns the set of chunk ids within the render radius of the
+// camera (a disc in the X/Z plane).
+func neededChunks() map[Vec3]bool {
+	cid := NearBlock(game.camera.Pos()).Chunkid()
+	n := *renderRadius
+	needed := make(map[Vec3]bool)
+	for dx := -n; dx < n; dx++ {
+		for dz := -n; dz < n; dz++ {
+			if dx*dx+dz*dz > n*n {
+				continue
+			}
+			needed[Vec3{cid.X + dx, 0, cid.Z + dz}] = true
+		}
+	}
+	return needed
+}
+
+// meshedCount reports how many of the given chunk ids have a built, non-dirty
+// mesh in the cache.
+func (r *BlockRender) meshedCount(ids map[Vec3]bool) int {
+	n := 0
+	for id := range ids {
+		if m, ok := r.meshcache.Load(id); ok && !m.(*Mesh).Dirty {
+			n++
+		}
+	}
+	return n
+}
+
 func (r *BlockRender) updateMeshCache() {
 	// Chunks whose light changed (from edits or neighbour loads) must be
 	// re-meshed; mark their cached meshes dirty so the pass below rebuilds them.
@@ -268,21 +298,7 @@ func (r *BlockRender) updateMeshCache() {
 		}
 	}
 
-	block := NearBlock(game.camera.Pos())
-	chunk := block.Chunkid()
-	x, z := chunk.X, chunk.Z
-	n := *renderRadius
-	needed := make(map[Vec3]bool)
-
-	for dx := -n; dx < n; dx++ {
-		for dz := -n; dz < n; dz++ {
-			id := Vec3{x + dx, 0, z + dz}
-			if dx*dx+dz*dz > n*n {
-				continue
-			}
-			needed[id] = true
-		}
-	}
+	needed := neededChunks()
 	var added, removed []Vec3
 	r.meshcache.Range(func(k, v interface{}) bool {
 		id := k.(Vec3)

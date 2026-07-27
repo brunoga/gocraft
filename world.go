@@ -17,6 +17,11 @@ type World struct {
 	// therefore need re-meshing; the render loop drains it.
 	lightMu    sync.Mutex
 	lightDirty map[Vec3]bool
+	// lcPtr is a one-entry cache of the chunk most recently touched by the light
+	// grid accessors. Light propagation is overwhelmingly within a single chunk,
+	// so this skips the LRU lookup (and its lock) for the common case. Guarded by
+	// lightMu; reset at the start of each light operation.
+	lcPtr *Chunk
 }
 
 func NewWorld() *World {
@@ -31,6 +36,23 @@ func NewWorld() *World {
 // --- lightGrid implementation (see light.go). All methods are lock-free; the
 // high-level operations that call them hold lightMu. ---
 
+// lightChunk resolves a chunk for the light accessors via the one-entry cache,
+// falling back to an LRU peek. Callers hold lightMu.
+func (w *World) lightChunk(cid Vec3) *Chunk {
+	if w.lcPtr != nil && w.lcPtr.id == cid {
+		return w.lcPtr
+	}
+	c := w.peekChunk(cid)
+	if c != nil {
+		w.lcPtr = c
+	}
+	return c
+}
+
+// resetLightCache clears the one-entry chunk cache. Call at the start of each
+// light operation so a stale (e.g. evicted) chunk pointer isn't reused.
+func (w *World) resetLightCache() { w.lcPtr = nil }
+
 func (w *World) blocksLight(p Vec3) bool {
 	if p.Y < 0 {
 		return true
@@ -38,14 +60,18 @@ func (w *World) blocksLight(p Vec3) bool {
 	if p.Y >= WorldHeight {
 		return false
 	}
-	return aoOccludes(w.Block(p))
+	c := w.lightChunk(p.Chunkid())
+	if c == nil {
+		return false
+	}
+	return aoOccludes(c.Block(p))
 }
 
 func (w *World) loaded(p Vec3) bool {
 	if p.Y < 0 || p.Y >= WorldHeight {
 		return false
 	}
-	return w.chunks.Contains(p.Chunkid())
+	return w.lightChunk(p.Chunkid()) != nil
 }
 
 func (w *World) light(p Vec3) uint8 {
@@ -55,7 +81,7 @@ func (w *World) light(p Vec3) uint8 {
 	if p.Y < 0 {
 		return 0
 	}
-	c := w.peekChunk(p.Chunkid())
+	c := w.lightChunk(p.Chunkid())
 	if c == nil {
 		// Unloaded neighbour: assume lit so border faces don't show dark seams.
 		return MaxLight
@@ -67,7 +93,7 @@ func (w *World) setLight(p Vec3, v uint8) {
 	if p.Y < 0 || p.Y >= WorldHeight {
 		return
 	}
-	c := w.peekChunk(p.Chunkid())
+	c := w.lightChunk(p.Chunkid())
 	if c == nil {
 		return
 	}
@@ -88,18 +114,32 @@ func (w *World) peekChunk(cid Vec3) *Chunk {
 func (w *World) seedChunkLight(c *Chunk) {
 	w.lightMu.Lock()
 	defer w.lightMu.Unlock()
+	w.resetLightCache()
 
+	// Only seed from just above the tallest block down; the empty sky above is
+	// implicitly full daylight and never sampled by meshing.
+	top := lightTop(c)
 	touched := make(map[Vec3]bool)
 	var q []Vec3
 	bx, bz := c.id.X*ChunkWidth, c.id.Z*ChunkWidth
 	for dx := 0; dx < ChunkWidth; dx++ {
 		for dz := 0; dz < ChunkWidth; dz++ {
-			q = append(q, seedSkyColumn(w, bx+dx, bz+dz, WorldHeight-1, touched)...)
+			q = append(q, seedSkyColumn(w, bx+dx, bz+dz, top, touched)...)
 		}
 	}
 	q = append(q, w.borderLightSources(c)...)
 	propagateIncrease(w, q, touched)
 	w.markLightDirty(touched)
+}
+
+// lightTop is the highest cell that needs lighting for a chunk: one above its
+// tallest block, clamped to the world height.
+func lightTop(c *Chunk) int {
+	top := c.maxY + 1
+	if top > WorldHeight-1 {
+		top = WorldHeight - 1
+	}
+	return top
 }
 
 // borderLightSources returns the lit cells of already-loaded neighbour chunks
@@ -108,12 +148,13 @@ func (w *World) seedChunkLight(c *Chunk) {
 func (w *World) borderLightSources(c *Chunk) []Vec3 {
 	var srcs []Vec3
 	bx, bz := c.id.X*ChunkWidth, c.id.Z*ChunkWidth
+	top := lightTop(c)
 	consider := func(p Vec3) {
 		if w.loaded(p) && w.light(p) > 0 {
 			srcs = append(srcs, p)
 		}
 	}
-	for y := 0; y < WorldHeight; y++ {
+	for y := 0; y <= top; y++ {
 		for k := 0; k < ChunkWidth; k++ {
 			consider(Vec3{bx - 1, y, bz + k})          // -X neighbour
 			consider(Vec3{bx + ChunkWidth, y, bz + k}) // +X neighbour
@@ -291,6 +332,7 @@ func (w *World) updateBlockLight(id Vec3, oldTp, newTp int) {
 	}
 	w.lightMu.Lock()
 	defer w.lightMu.Unlock()
+	w.resetLightCache()
 	touched := make(map[Vec3]bool)
 	if nowOpaque {
 		lightPlaceBlock(w, id, touched)
