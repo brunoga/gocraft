@@ -16,6 +16,7 @@ out float diff;
 out float fog_factor;
 out float AO;
 out float Light;
+out vec3 Vdir;
 
 void main() {
     gl_Position = matrix *  vec4(pos, 1.0);
@@ -27,4 +28,6 @@ void main() {
     diff = max(0, dot(normal, sundir));
     AO = ao;
     Light = light;
+    // View ray toward this vertex, used to fade fog into the sky gradient.
+    Vdir = pos - camera;
 }

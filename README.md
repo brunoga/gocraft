@@ -12,6 +12,7 @@ A Minecraft like game written in go, just for fun!
 - Multiplayer support
 - Sky lighting: caves and enclosed spaces get dark, and overhangs cast soft shadows. Lighting updates as you dig and build.
 - Day-night cycle: the sun arcs across the sky, shifting the shading angle and sky colour, and the world darkens at night (caves stay black). Set the cycle length with `-daylen <seconds>` (default 600; e.g. `gocraft -daylen 60` for a fast cycle).
+- Rendered sky: a gradient sky (horizon to zenith, with a warm glow on the sun's side at dawn and dusk) plus sun and moon discs that track across the sky as time passes.
 
 ## Dependencies
 

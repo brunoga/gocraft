@@ -62,8 +62,7 @@ func TestAORendersDarkening(t *testing.T) {
 		{Name: "aoflag", Type: glhf.Float},
 		{Name: "sundir", Type: glhf.Vec3},
 		{Name: "daylight", Type: glhf.Float},
-		{Name: "skycolor", Type: glhf.Vec3},
-	}, blockVertexSource, blockFragmentSource)
+	}, blockVertexSource, withSkyCommon(blockFragmentSource))
 	if err != nil {
 		t.Fatalf("shader compile failed: %v", err)
 	}
@@ -112,7 +111,6 @@ func TestAORendersDarkening(t *testing.T) {
 		shader.SetUniformAttr(3, aoflag)
 		shader.SetUniformAttr(4, mgl32.Vec3{0, 1, -0.3}.Normalize()) // sun overhead
 		shader.SetUniformAttr(5, daylight)
-		shader.SetUniformAttr(6, skyDay)
 		mesh.Draw()
 		texture.End()
 		shader.End()
