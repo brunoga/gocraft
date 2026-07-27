@@ -332,18 +332,28 @@ func makePlantData(vertices []float32, show [6]bool, block Vec3, tex *BlockTextu
 	return vertices
 }
 
-// makeTorchData builds a thin emissive post for a torch: always fully visible
-// (no face culling or AO) and lit by its own cell (skylight + block light).
+// makeTorchData builds a torch as three stacked emissive segments: a spotted
+// brown wooden handle (side texture), a thin band of grey ash (Down texture),
+// and a small orange ember at the tip (Up texture). It is always fully visible
+// (no face culling or AO) and lit by its own cell (skylight + block light), so
+// the whole thing glows.
 func makeTorchData(vertices []float32, block Vec3, tex *BlockTexture, lightAt, blockAt func(dx, dy, dz int) float32) []float32 {
 	const w = 0.1
-	t := tex.Up
 	x, y, z := float32(block.X), float32(block.Y), float32(block.Z)
-	x0, x1 := x-w, x+w
-	y0, y1 := y-0.5, y+0.1
-	z0, z1 := z-w, z+w
 	lv := lightAt(0, 0, 0)
 	bv := blockAt(0, 0, 0)
-	vertices = append(vertices, []float32{
+	// Bottom -> top. The ember is slightly narrower so the tip tapers.
+	vertices = appendTorchBox(vertices, x-w, x+w, y-0.5, y-0.02, z-w, z+w, tex.Left, lv, bv)
+	vertices = appendTorchBox(vertices, x-w, x+w, y-0.02, y+0.04, z-w, z+w, tex.Down, lv, bv)
+	vertices = appendTorchBox(vertices, x-w*0.9, x+w*0.9, y+0.04, y+0.15, z-w*0.9, z+w*0.9, tex.Up, lv, bv)
+	return vertices
+}
+
+// appendTorchBox appends one axis-aligned box, every face textured with t, used
+// to stack the torch's coloured segments. lv/bv are the cell's skylight and
+// block-light levels, applied to every vertex.
+func appendTorchBox(vertices []float32, x0, x1, y0, y1, z0, z1 float32, t FaceTexture, lv, bv float32) []float32 {
+	return append(vertices, []float32{
 		// left (-x)
 		x0, y0, z0, t[0][0], t[0][1], -1, 0, 0, 1, lv, bv,
 		x0, y0, z1, t[1][0], t[1][1], -1, 0, 0, 1, lv, bv,
@@ -387,7 +397,6 @@ func makeTorchData(vertices []float32, block Vec3, tex *BlockTexture, lightAt, b
 		x1, y1, z0, t[4][0], t[4][1], 0, 0, -1, 1, lv, bv,
 		x1, y0, z0, t[5][0], t[5][1], 0, 0, -1, 1, lv, bv,
 	}...)
-	return vertices
 }
 
 // blockNone is a block-light sampler that reports no block light (for the HUD
