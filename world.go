@@ -13,9 +13,10 @@ type World struct {
 	chunks *lru.Cache // map[Vec3]*Chunk
 
 	// lightMu guards all per-voxel light state (Chunk.light) and the light
-	// propagation algorithms. lightDirty collects chunks whose light changed and
-	// therefore need re-meshing; the render loop drains it.
-	lightMu    sync.Mutex
+	// propagation algorithms. Writers (seeding, edits) take it exclusively; mesh
+	// workers take it for reading (RLock) so many chunks can mesh at once.
+	// lightDirty collects chunks whose light changed and need re-meshing.
+	lightMu    sync.RWMutex
 	lightDirty map[Vec3]bool
 	// lcPtr is a one-entry cache of the chunk most recently touched by the light
 	// grid accessors. Light propagation is overwhelmingly within a single chunk,
