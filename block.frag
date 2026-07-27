@@ -7,10 +7,10 @@ in float AO;
 in float Light;
 uniform sampler2D tex;
 uniform float aoflag;
+uniform float daylight;
+uniform vec3 skycolor;
 
 out vec4 FragColor;
-
-const vec3 sky_color = vec3(0.57, 0.71, 0.77);
 
 void main() {
     vec3 color = vec3(texture(tex, vec2(Tex.x, 1-Tex.y)));
@@ -33,6 +33,9 @@ void main() {
     // under open sky and 0 in a fully enclosed cave (making it black). Block
     // light sources, when added, fold in here as max(skylight, blocklight).
     color *= Light;
-    color = mix(color, sky_color, fog_factor);
+    // Day-night cycle: scale sky-lit surfaces by the current daylight level so
+    // the world darkens at night. Caves (Light=0) stay black at all hours.
+    color *= daylight;
+    color = mix(color, skycolor, fog_factor);
     FragColor = vec4(color, 1);
 }

@@ -79,6 +79,9 @@ func NewBlockRender() (*BlockRender, error) {
 			glhf.Attr{Name: "camera", Type: glhf.Vec3},
 			glhf.Attr{Name: "fogdis", Type: glhf.Float},
 			glhf.Attr{Name: "aoflag", Type: glhf.Float},
+			glhf.Attr{Name: "sundir", Type: glhf.Vec3},
+			glhf.Attr{Name: "daylight", Type: glhf.Float},
+			glhf.Attr{Name: "skycolor", Type: glhf.Vec3},
 		}, blockVertexSource, blockFragmentSource)
 
 		if err != nil {
@@ -421,6 +424,12 @@ func (r *BlockRender) drawChunks() {
 	r.shader.SetUniformAttr(1, game.camera.Pos())
 	r.shader.SetUniformAttr(2, float32(*renderRadius)*ChunkWidth)
 	r.shader.SetUniformAttr(3, b2f(r.aoEnabled))
+	// Day-night: sun direction, overall daylight level and sky colour for the
+	// current time. game.prevtime is the frame's wall-clock time.
+	now := game.prevtime
+	r.shader.SetUniformAttr(4, gameClock.SunDir(now))
+	r.shader.SetUniformAttr(5, gameClock.Daylight(now))
+	r.shader.SetUniformAttr(6, gameClock.SkyColor(now))
 
 	planes := frustumPlanes(&mat)
 	r.stat = Stat{}
@@ -450,6 +459,11 @@ func (r *BlockRender) drawItem() {
 	r.shader.SetUniformAttr(0, mat)
 	r.shader.SetUniformAttr(1, mgl32.Vec3{0, 0, 0})
 	r.shader.SetUniformAttr(2, float32(*renderRadius)*ChunkWidth)
+	// Keep the HUD item preview stably lit regardless of the time of day: a
+	// fixed sun angle and full daylight.
+	r.shader.SetUniformAttr(4, mgl32.Vec3{-1, 1, -1}.Normalize())
+	r.shader.SetUniformAttr(5, float32(1))
+	r.shader.SetUniformAttr(6, skyDay)
 	r.item.Draw()
 }
 
