@@ -169,7 +169,7 @@ func (r *BlockRender) buildChunkFaces(c *Chunk) []float32 {
 			return float32(cellBlockLight(Vec3{id.X + dx, id.Y + dy, id.Z + dz})) / float32(MaxLight)
 		}
 		if isTorch(tp) {
-			facedata = makeTorchData(facedata, id, tex.Texture(tp), lightAt, blockAtLight)
+			facedata = makeTorchData(facedata, id, tp, tex.Texture(tp), lightAt, blockAtLight)
 			return
 		}
 		show := [...]bool{
@@ -229,7 +229,7 @@ func (r *BlockRender) UpdateItem(w int) {
 	show := [...]bool{true, true, true, true, true, true}
 	pos := Vec3{0, 0, 0}
 	if isTorch(w) {
-		vertices = makeTorchData(vertices, pos, texture, lightFull, blockNone)
+		vertices = makeTorchData(vertices, pos, w, texture, lightFull, blockNone)
 	} else if IsPlant(w) || isFire(w) {
 		vertices = makePlantData(vertices, show, pos, texture, lightFull, blockNone)
 	} else {

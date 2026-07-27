@@ -104,7 +104,7 @@ func TestTorchAndFireRender(t *testing.T) {
 	isBrown := func(r, g, b int) bool { return r > g && g > b && r-b > 15 && r < 210 }
 
 	// --- Torch: expect brown (handle), grey (ash), and orange (ember) pixels. ---
-	torch := drawMesh(makeTorchData(nil, Vec3{0, 0, 0}, tex.Texture(blockTorch), full, full))
+	torch := drawMesh(makeTorchData(nil, Vec3{0, 0, 0}, blockTorch, tex.Texture(blockTorch), full, full))
 	var brown, grey, orange, lit int
 	for i := 0; i+3 < len(torch); i += 4 {
 		r, g, b := int(torch[i]), int(torch[i+1]), int(torch[i+2])
@@ -160,5 +160,34 @@ func TestTorchAndFireRender(t *testing.T) {
 	}
 	if fireOrange < 100 {
 		t.Errorf("fire should be predominantly orange, got %d orange of %d lit", fireOrange, fireLit)
+	}
+
+	// --- Wall torch: a +X-leaning torch's ember (top) should sit to the +X side
+	// (screen right, higher px) of its base (bottom). ReadPixels rows go
+	// bottom-to-top, so the ember is in the upper rows. ---
+	wall := drawMesh(makeTorchData(nil, Vec3{0, 0, 0}, blockTorchXp, tex.Texture(blockTorchXp), full, full))
+	var topX, topN, botX, botN int
+	for i := 0; i+3 < len(wall); i += 4 {
+		r, g, b := int(wall[i]), int(wall[i+1]), int(wall[i+2])
+		if r+g+b < 30 {
+			continue
+		}
+		px := (i / 4) % trW
+		py := (i / 4) / trW
+		if py > trH/2 {
+			topX += px
+			topN++
+		} else {
+			botX += px
+			botN++
+		}
+	}
+	if topN == 0 || botN == 0 {
+		t.Fatalf("wall torch barely rendered (top=%d bot=%d)", topN, botN)
+	}
+	topMean, botMean := topX/topN, botX/botN
+	t.Logf("wall torch (+X lean): base meanX=%d ember meanX=%d", botMean, topMean)
+	if topMean <= botMean+5 {
+		t.Errorf("+X wall torch ember (meanX=%d) should lean right of its base (meanX=%d)", topMean, botMean)
 	}
 }

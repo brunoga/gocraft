@@ -333,70 +333,84 @@ func makePlantData(vertices []float32, show [6]bool, block Vec3, tex *BlockTextu
 }
 
 // makeTorchData builds a torch as three stacked emissive segments: a spotted
-// brown wooden handle (side texture), a thin band of grey ash (Down texture),
-// and a small orange ember at the tip (Up texture). It is always fully visible
-// (no face culling or AO) and lit by its own cell (skylight + block light), so
-// the whole thing glows.
-func makeTorchData(vertices []float32, block Vec3, tex *BlockTexture, lightAt, blockAt func(dx, dy, dz int) float32) []float32 {
+// brown wooden handle (side texture), a band of grey ash (Down texture), and an
+// orange ember at the tip (Up texture). It is always fully visible (no face
+// culling or AO) and lit by its own cell (skylight + block light), so the whole
+// thing glows. A wall torch (tp with a lean) is sheared so its base sits against
+// the wall and the ember leans out.
+func makeTorchData(vertices []float32, block Vec3, tp int, tex *BlockTexture, lightAt, blockAt func(dx, dy, dz int) float32) []float32 {
 	const w = 0.1
-	x, y, z := float32(block.X), float32(block.Y), float32(block.Z)
+	bx, by, bz := float32(block.X), float32(block.Y), float32(block.Z)
 	lv := lightAt(0, 0, 0)
 	bv := blockAt(0, 0, 0)
-	// Bottom -> top. The ember is slightly narrower so the tip tapers.
-	vertices = appendTorchBox(vertices, x-w, x+w, y-0.5, y-0.02, z-w, z+w, tex.Left, lv, bv)
-	vertices = appendTorchBox(vertices, x-w, x+w, y-0.02, y+0.04, z-w, z+w, tex.Down, lv, bv)
-	vertices = appendTorchBox(vertices, x-w*0.9, x+w*0.9, y+0.04, y+0.15, z-w*0.9, z+w*0.9, tex.Up, lv, bv)
+	// Bottom -> top: brown handle, grey ash band, tall orange ember (kept wide so
+	// the burning tip reads clearly).
+	vertices = appendTorchBox(vertices, tp, bx, by, bz, w, -0.5, -0.05, tex.Left, lv, bv)
+	vertices = appendTorchBox(vertices, tp, bx, by, bz, w, -0.05, 0.02, tex.Down, lv, bv)
+	vertices = appendTorchBox(vertices, tp, bx, by, bz, w, 0.02, 0.22, tex.Up, lv, bv)
 	return vertices
 }
 
-// appendTorchBox appends one axis-aligned box, every face textured with t, used
-// to stack the torch's coloured segments. lv/bv are the cell's skylight and
-// block-light levels, applied to every vertex.
-func appendTorchBox(vertices []float32, x0, x1, y0, y1, z0, z1 float32, t FaceTexture, lv, bv float32) []float32 {
-	return append(vertices, []float32{
-		// left (-x)
-		x0, y0, z0, t[0][0], t[0][1], -1, 0, 0, 1, lv, bv,
-		x0, y0, z1, t[1][0], t[1][1], -1, 0, 0, 1, lv, bv,
-		x0, y1, z1, t[2][0], t[2][1], -1, 0, 0, 1, lv, bv,
-		x0, y1, z1, t[3][0], t[3][1], -1, 0, 0, 1, lv, bv,
-		x0, y1, z0, t[4][0], t[4][1], -1, 0, 0, 1, lv, bv,
-		x0, y0, z0, t[5][0], t[5][1], -1, 0, 0, 1, lv, bv,
-		// right (+x)
-		x1, y0, z1, t[0][0], t[0][1], 1, 0, 0, 1, lv, bv,
-		x1, y0, z0, t[1][0], t[1][1], 1, 0, 0, 1, lv, bv,
-		x1, y1, z0, t[2][0], t[2][1], 1, 0, 0, 1, lv, bv,
-		x1, y1, z0, t[3][0], t[3][1], 1, 0, 0, 1, lv, bv,
-		x1, y1, z1, t[4][0], t[4][1], 1, 0, 0, 1, lv, bv,
-		x1, y0, z1, t[5][0], t[5][1], 1, 0, 0, 1, lv, bv,
-		// top (+y)
-		x0, y1, z1, t[0][0], t[0][1], 0, 1, 0, 1, lv, bv,
-		x1, y1, z1, t[1][0], t[1][1], 0, 1, 0, 1, lv, bv,
-		x1, y1, z0, t[2][0], t[2][1], 0, 1, 0, 1, lv, bv,
-		x1, y1, z0, t[3][0], t[3][1], 0, 1, 0, 1, lv, bv,
-		x0, y1, z0, t[4][0], t[4][1], 0, 1, 0, 1, lv, bv,
-		x0, y1, z1, t[5][0], t[5][1], 0, 1, 0, 1, lv, bv,
-		// bottom (-y)
-		x0, y0, z0, t[0][0], t[0][1], 0, -1, 0, 1, lv, bv,
-		x1, y0, z0, t[1][0], t[1][1], 0, -1, 0, 1, lv, bv,
-		x1, y0, z1, t[2][0], t[2][1], 0, -1, 0, 1, lv, bv,
-		x1, y0, z1, t[3][0], t[3][1], 0, -1, 0, 1, lv, bv,
-		x0, y0, z1, t[4][0], t[4][1], 0, -1, 0, 1, lv, bv,
-		x0, y0, z0, t[5][0], t[5][1], 0, -1, 0, 1, lv, bv,
-		// front (+z)
-		x0, y0, z1, t[0][0], t[0][1], 0, 0, 1, 1, lv, bv,
-		x1, y0, z1, t[1][0], t[1][1], 0, 0, 1, 1, lv, bv,
-		x1, y1, z1, t[2][0], t[2][1], 0, 0, 1, 1, lv, bv,
-		x1, y1, z1, t[3][0], t[3][1], 0, 0, 1, 1, lv, bv,
-		x0, y1, z1, t[4][0], t[4][1], 0, 0, 1, 1, lv, bv,
-		x0, y0, z1, t[5][0], t[5][1], 0, 0, 1, 1, lv, bv,
-		// back (-z)
-		x1, y0, z0, t[0][0], t[0][1], 0, 0, -1, 1, lv, bv,
-		x0, y0, z0, t[1][0], t[1][1], 0, 0, -1, 1, lv, bv,
-		x0, y1, z0, t[2][0], t[2][1], 0, 0, -1, 1, lv, bv,
-		x0, y1, z0, t[3][0], t[3][1], 0, 0, -1, 1, lv, bv,
-		x1, y1, z0, t[4][0], t[4][1], 0, 0, -1, 1, lv, bv,
-		x1, y0, z0, t[5][0], t[5][1], 0, 0, -1, 1, lv, bv,
-	}...)
+// appendTorchBox appends one box of a torch segment (all faces textured with t),
+// sheared for the torch's lean: the box spans local heights y0..y1 around the
+// block centre (bx,by,bz) with half-width hw, and each vertex is offset
+// horizontally by torchOffsetAt for its height. lv/bv are the cell's skylight
+// and block-light levels.
+func appendTorchBox(vertices []float32, tp int, bx, by, bz, hw, y0, y1 float32, t FaceTexture, lv, bv float32) []float32 {
+	obx, obz := torchOffsetAt(tp, y0) // shear at the bottom
+	otx, otz := torchOffsetAt(tp, y1) // shear at the top
+	// Eight corners in world space: bottom (b*) at y0, top (t*) at y1.
+	yb, yt := by+y0, by+y1
+	bx0, bx1 := bx-hw+obx, bx+hw+obx
+	bz0, bz1 := bz-hw+obz, bz+hw+obz
+	tx0, tx1 := bx-hw+otx, bx+hw+otx
+	tz0, tz1 := bz-hw+otz, bz+hw+otz
+	push := func(x, y, z, u, v, nx, ny, nz float32) {
+		vertices = append(vertices, x, y, z, u, v, nx, ny, nz, 1, lv, bv)
+	}
+	// left (-x)
+	push(bx0, yb, bz0, t[0][0], t[0][1], -1, 0, 0)
+	push(bx0, yb, bz1, t[1][0], t[1][1], -1, 0, 0)
+	push(tx0, yt, tz1, t[2][0], t[2][1], -1, 0, 0)
+	push(tx0, yt, tz1, t[3][0], t[3][1], -1, 0, 0)
+	push(tx0, yt, tz0, t[4][0], t[4][1], -1, 0, 0)
+	push(bx0, yb, bz0, t[5][0], t[5][1], -1, 0, 0)
+	// right (+x)
+	push(bx1, yb, bz1, t[0][0], t[0][1], 1, 0, 0)
+	push(bx1, yb, bz0, t[1][0], t[1][1], 1, 0, 0)
+	push(tx1, yt, tz0, t[2][0], t[2][1], 1, 0, 0)
+	push(tx1, yt, tz0, t[3][0], t[3][1], 1, 0, 0)
+	push(tx1, yt, tz1, t[4][0], t[4][1], 1, 0, 0)
+	push(bx1, yb, bz1, t[5][0], t[5][1], 1, 0, 0)
+	// top (+y)
+	push(tx0, yt, tz1, t[0][0], t[0][1], 0, 1, 0)
+	push(tx1, yt, tz1, t[1][0], t[1][1], 0, 1, 0)
+	push(tx1, yt, tz0, t[2][0], t[2][1], 0, 1, 0)
+	push(tx1, yt, tz0, t[3][0], t[3][1], 0, 1, 0)
+	push(tx0, yt, tz0, t[4][0], t[4][1], 0, 1, 0)
+	push(tx0, yt, tz1, t[5][0], t[5][1], 0, 1, 0)
+	// bottom (-y)
+	push(bx0, yb, bz0, t[0][0], t[0][1], 0, -1, 0)
+	push(bx1, yb, bz0, t[1][0], t[1][1], 0, -1, 0)
+	push(bx1, yb, bz1, t[2][0], t[2][1], 0, -1, 0)
+	push(bx1, yb, bz1, t[3][0], t[3][1], 0, -1, 0)
+	push(bx0, yb, bz1, t[4][0], t[4][1], 0, -1, 0)
+	push(bx0, yb, bz0, t[5][0], t[5][1], 0, -1, 0)
+	// front (+z)
+	push(bx0, yb, bz1, t[0][0], t[0][1], 0, 0, 1)
+	push(bx1, yb, bz1, t[1][0], t[1][1], 0, 0, 1)
+	push(tx1, yt, tz1, t[2][0], t[2][1], 0, 0, 1)
+	push(tx1, yt, tz1, t[3][0], t[3][1], 0, 0, 1)
+	push(tx0, yt, tz1, t[4][0], t[4][1], 0, 0, 1)
+	push(bx0, yb, bz1, t[5][0], t[5][1], 0, 0, 1)
+	// back (-z)
+	push(bx1, yb, bz0, t[0][0], t[0][1], 0, 0, -1)
+	push(bx0, yb, bz0, t[1][0], t[1][1], 0, 0, -1)
+	push(tx0, yt, tz0, t[2][0], t[2][1], 0, 0, -1)
+	push(tx0, yt, tz0, t[3][0], t[3][1], 0, 0, -1)
+	push(tx1, yt, tz0, t[4][0], t[4][1], 0, 0, -1)
+	push(bx1, yb, bz0, t[5][0], t[5][1], 0, 0, -1)
+	return vertices
 }
 
 // blockNone is a block-light sampler that reports no block light (for the HUD
