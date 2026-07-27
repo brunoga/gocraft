@@ -54,10 +54,12 @@ type Chunk struct {
 	id     Vec3
 	blocks sync.Map // map[Vec3]int
 
-	// light holds per-voxel light levels (0..MaxLight) for this chunk's column,
-	// indexed by lightIndex. Allocated lazily on first write. Access is
-	// serialized by World.lightMu, not by the sync.Map above.
-	light []uint8
+	// light holds per-voxel sky-light levels (0..MaxLight) for this chunk's
+	// column, indexed by lightIndex. blockLight holds light emitted by blocks
+	// (torches). Both are allocated lazily on first write. Access is serialized
+	// by World.lightMu, not by the sync.Map above.
+	light      []uint8
+	blockLight []uint8
 }
 
 func NewChunk(id Vec3) *Chunk {
@@ -128,4 +130,20 @@ func (c *Chunk) setLight(id Vec3, v uint8) {
 		c.light = make([]uint8, ChunkWidth*ChunkWidth*WorldHeight)
 	}
 	c.light[c.lightIndex(id)] = v
+}
+
+// getBlockLight / setBlockLight are the block-light (torch) counterparts of
+// getLight / setLight.
+func (c *Chunk) getBlockLight(id Vec3) uint8 {
+	if c.blockLight == nil {
+		return 0
+	}
+	return c.blockLight[c.lightIndex(id)]
+}
+
+func (c *Chunk) setBlockLight(id Vec3, v uint8) {
+	if c.blockLight == nil {
+		c.blockLight = make([]uint8, ChunkWidth*ChunkWidth*WorldHeight)
+	}
+	c.blockLight[c.lightIndex(id)] = v
 }

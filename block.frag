@@ -5,6 +5,7 @@ in float diff;
 in float fog_factor;
 in float AO;
 in float Light;
+in float Blocklight;
 in vec3 Vdir;
 uniform sampler2D tex;
 uniform float aoflag;
@@ -30,13 +31,11 @@ void main() {
     // the effect at runtime (0 = off -> no darkening).
     float ao_factor = mix(1.0, mix(0.35, 1.0, AO), aoflag);
     color *= ao_factor;
-    // Skylight: modulate by how much sky light reaches this surface. Light is 1
-    // under open sky and 0 in a fully enclosed cave (making it black). Block
-    // light sources, when added, fold in here as max(skylight, blocklight).
-    color *= Light;
-    // Day-night cycle: scale sky-lit surfaces by the current daylight level so
-    // the world darkens at night. Caves (Light=0) stay black at all hours.
-    color *= daylight;
+    // Illumination is the brighter of skylight (scaled by the day-night daylight
+    // level) and block light (torches, unaffected by time of day). A sealed cave
+    // is black unless a torch lights it; a torch-lit spot glows even at night.
+    float lit = max(Light * daylight, Blocklight);
+    color *= lit;
     // Fog fades distant terrain into the sky gradient in the view direction, so
     // the horizon matches the sky exactly (same skyBackground, minus the discs).
     vec3 fogcolor = skyBackground(normalize(Vdir), sundir, daylight);

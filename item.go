@@ -134,9 +134,12 @@ var itemDesc = map[int][6]int{
 	62: {206, 206, 206, 206, 206, 206},
 	63: {207, 207, 207, 207, 207, 207},
 	64: {226, 224, 241, 209, 227, 225},
+	// Torch: an emissive light source, rendered as a thin post.
+	blockTorch: {20, 20, 20, 20, 20, 20},
 }
 
 var availableItems = []int{
+	blockTorch,
 	1,
 	2,
 	3,

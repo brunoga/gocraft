@@ -74,6 +74,7 @@ func NewBlockRender() (*BlockRender, error) {
 			glhf.Attr{Name: "normal", Type: glhf.Vec3},
 			glhf.Attr{Name: "ao", Type: glhf.Float},
 			glhf.Attr{Name: "light", Type: glhf.Float},
+			glhf.Attr{Name: "blocklight", Type: glhf.Float},
 		}, glhf.AttrFormat{
 			glhf.Attr{Name: "matrix", Type: glhf.Mat4},
 			glhf.Attr{Name: "camera", Type: glhf.Vec3},
@@ -144,10 +145,32 @@ func (r *BlockRender) buildChunkFaces(c *Chunk) []float32 {
 		}
 		return ch.getLight(p)
 	}
+	cellBlockLight := func(p Vec3) uint8 {
+		if p.Y < 0 || p.Y >= WorldHeight {
+			return 0
+		}
+		ch := chunkAt(p.Chunkid())
+		if ch == nil {
+			return 0
+		}
+		return ch.getBlockLight(p)
+	}
 
 	c.RangeBlocks(func(id Vec3, tp int) {
 		if tp == 0 {
 			log.Panicf("unexpect 0 item type on %v", id)
+		}
+		// lightAt/blockAtLight return the sky/block light (0..1) of the
+		// neighbouring air cell.
+		lightAt := func(dx, dy, dz int) float32 {
+			return float32(cellLight(Vec3{id.X + dx, id.Y + dy, id.Z + dz})) / float32(MaxLight)
+		}
+		blockAtLight := func(dx, dy, dz int) float32 {
+			return float32(cellBlockLight(Vec3{id.X + dx, id.Y + dy, id.Z + dz})) / float32(MaxLight)
+		}
+		if isTorch(tp) {
+			facedata = makeTorchData(facedata, id, tex.Texture(tp), lightAt, blockAtLight)
+			return
 		}
 		show := [...]bool{
 			IsTransparent(blockAt(id.Left())),
@@ -157,19 +180,15 @@ func (r *BlockRender) buildChunkFaces(c *Chunk) []float32 {
 			IsTransparent(blockAt(id.Front())),
 			IsTransparent(blockAt(id.Back())),
 		}
-		// lightAt returns the skylight (0..1) of the neighbouring air cell.
-		lightAt := func(dx, dy, dz int) float32 {
-			return float32(cellLight(Vec3{id.X + dx, id.Y + dy, id.Z + dz})) / float32(MaxLight)
-		}
-		if IsPlant(blockAt(id)) {
-			facedata = makePlantData(facedata, show, id, tex.Texture(tp), lightAt)
+		if IsPlant(tp) {
+			facedata = makePlantData(facedata, show, id, tex.Texture(tp), lightAt, blockAtLight)
 		} else {
 			// occ samples whether the neighbouring block at the given offset
 			// occludes ambient light, used to compute per-vertex AO.
 			occ := func(dx, dy, dz int) bool {
 				return aoOccludes(blockAt(Vec3{id.X + dx, id.Y + dy, id.Z + dz}))
 			}
-			facedata = makeCubeData(facedata, show, id, tex.Texture(tp), occ, lightAt)
+			facedata = makeCubeData(facedata, show, id, tex.Texture(tp), occ, lightAt, blockAtLight)
 		}
 	})
 	return facedata
@@ -208,12 +227,14 @@ func (r *BlockRender) UpdateItem(w int) {
 	texture := tex.Texture(w)
 	show := [...]bool{true, true, true, true, true, true}
 	pos := Vec3{0, 0, 0}
-	if IsPlant(w) {
-		vertices = makePlantData(vertices, show, pos, texture, lightFull)
+	if isTorch(w) {
+		vertices = makeTorchData(vertices, pos, texture, lightFull, blockNone)
+	} else if IsPlant(w) {
+		vertices = makePlantData(vertices, show, pos, texture, lightFull, blockNone)
 	} else {
 		// The HUD preview has no world neighbours: nothing occludes it and it is
 		// fully lit.
-		vertices = makeCubeData(vertices, show, pos, texture, aoOpen, lightFull)
+		vertices = makeCubeData(vertices, show, pos, texture, aoOpen, lightFull, blockNone)
 	}
 	item := NewMesh(r.shader, vertices)
 	if r.item != nil {

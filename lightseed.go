@@ -20,15 +20,7 @@ type chunkGrid struct {
 	c            *Chunk
 	baseX, baseZ int
 	top          int
-}
-
-func newChunkGrid(c *Chunk) *chunkGrid {
-	return &chunkGrid{
-		c:     c,
-		baseX: c.id.X * ChunkWidth,
-		baseZ: c.id.Z * ChunkWidth,
-		top:   lightTop(c),
-	}
+	block        bool // false = skylight field, true = block-light field
 }
 
 func (g *chunkGrid) inBounds(p Vec3) bool {
@@ -40,21 +32,48 @@ func (g *chunkGrid) loaded(p Vec3) bool { return g.inBounds(p) }
 
 // blocksLight is only ever called for in-bounds cells (propagation checks
 // loaded() first), so c.Block is safe.
-func (g *chunkGrid) blocksLight(p Vec3) bool  { return aoOccludes(g.c.Block(p)) }
-func (g *chunkGrid) light(p Vec3) uint8       { return g.c.getLight(p) }
-func (g *chunkGrid) setLight(p Vec3, v uint8) { g.c.setLight(p, v) }
+func (g *chunkGrid) blocksLight(p Vec3) bool { return aoOccludes(g.c.Block(p)) }
+func (g *chunkGrid) light(p Vec3) uint8 {
+	if g.block {
+		return g.c.getBlockLight(p)
+	}
+	return g.c.getLight(p)
+}
+func (g *chunkGrid) setLight(p Vec3, v uint8) {
+	if g.block {
+		g.c.setBlockLight(p, v)
+	} else {
+		g.c.setLight(p, v)
+	}
+}
 
-// seedChunkLocal seeds a chunk's skylight in isolation. It touches only c's own
-// arrays, so it is safe to run concurrently for different chunks.
+// seedChunkLocal seeds a chunk's skylight and block light in isolation. It
+// touches only c's own arrays, so it is safe to run concurrently for different
+// chunks.
 func seedChunkLocal(c *Chunk) {
-	g := newChunkGrid(c)
+	base := chunkGrid{c: c, baseX: c.id.X * ChunkWidth, baseZ: c.id.Z * ChunkWidth, top: lightTop(c)}
+
+	// Skylight from open columns.
+	gsky := base
 	var q []Vec3
 	for dx := 0; dx < ChunkWidth; dx++ {
 		for dz := 0; dz < ChunkWidth; dz++ {
-			q = append(q, seedSkyColumn(g, g.baseX+dx, g.baseZ+dz, g.top, nil)...)
+			q = append(q, seedSkyColumn(&gsky, gsky.baseX+dx, gsky.baseZ+dz, gsky.top, nil)...)
 		}
 	}
-	propagateIncrease(g, q, nil)
+	propagateIncrease(&gsky, q, nil)
+
+	// Block light from emissive blocks (torches) in this chunk.
+	gblk := base
+	gblk.block = true
+	var bq []Vec3
+	c.RangeBlocks(func(id Vec3, tp int) {
+		if e := blockEmission(tp); e > 0 {
+			gblk.setLight(id, e)
+			bq = append(bq, id)
+		}
+	})
+	propagateIncrease(&gblk, bq, nil)
 }
 
 // seedChunkBatch seeds the skylight of the given freshly loaded chunks: phase 1
@@ -79,10 +98,11 @@ func (w *World) seedChunkBatch(chunks []*Chunk) {
 	}
 	wg.Wait()
 
-	// Phase 2: stitch light across chunk borders on the world grid.
+	// Phase 2: stitch both light fields across chunk borders on the world grid.
 	w.resetLightCache()
 	touched := make(map[Vec3]bool)
-	propagateIncrease(w, w.batchBorderSources(chunks), touched)
+	propagateIncrease(w, w.batchBorderSources(chunks, w.light), touched)
+	propagateIncrease(blockGrid{w}, w.batchBorderSources(chunks, w.getBlockLight), touched)
 
 	// Every newly seeded chunk needs a first mesh; the stitch may also have
 	// changed already-loaded neighbours.
@@ -97,13 +117,13 @@ func (w *World) seedChunkBatch(chunks []*Chunk) {
 // b across the seam), whichever side is brighter by more than one level. Cells
 // where both sides already agree contribute nothing, so for continuous surface
 // terrain this is nearly empty and only caves/tunnels crossing a seam matter.
-func (w *World) batchBorderSources(chunks []*Chunk) []Vec3 {
+func (w *World) batchBorderSources(chunks []*Chunk, read func(Vec3) uint8) []Vec3 {
 	var q []Vec3
 	consider := func(a, b Vec3) {
 		if !w.loaded(b) {
 			return
 		}
-		la, lb := w.light(a), w.light(b)
+		la, lb := read(a), read(b)
 		if la > lb+1 {
 			q = append(q, a)
 		} else if lb > la+1 {

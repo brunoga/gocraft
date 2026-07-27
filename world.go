@@ -109,6 +109,41 @@ func (w *World) peekChunk(cid Vec3) *Chunk {
 	return v.(*Chunk)
 }
 
+// getBlockLight / setBlockLight are the block-light (torch) counterparts of
+// light / setLight. Unlike skylight there is no open-sky fallback: an unloaded
+// or out-of-range cell simply carries no block light.
+func (w *World) getBlockLight(p Vec3) uint8 {
+	if p.Y < 0 || p.Y >= WorldHeight {
+		return 0
+	}
+	c := w.lightChunk(p.Chunkid())
+	if c == nil {
+		return 0
+	}
+	return c.getBlockLight(p)
+}
+
+func (w *World) setBlockLight(p Vec3, v uint8) {
+	if p.Y < 0 || p.Y >= WorldHeight {
+		return
+	}
+	c := w.lightChunk(p.Chunkid())
+	if c == nil {
+		return
+	}
+	c.setBlockLight(p, v)
+}
+
+// blockGrid views the world's block-light field as a lightGrid, so the same
+// propagation code (light.go) drives both skylight and block light. It shares
+// blocksLight/loaded with skylight but reads/writes the block-light field.
+type blockGrid struct{ w *World }
+
+func (g blockGrid) blocksLight(p Vec3) bool  { return g.w.blocksLight(p) }
+func (g blockGrid) loaded(p Vec3) bool       { return g.w.loaded(p) }
+func (g blockGrid) light(p Vec3) uint8       { return g.w.getBlockLight(p) }
+func (g blockGrid) setLight(p Vec3, v uint8) { g.w.setBlockLight(p, v) }
+
 // lightTop is the highest cell seeding fills: the top of the world. Cells above
 // are handled by the WorldHeight guard in light().
 func lightTop(*Chunk) int { return WorldHeight - 1 }
@@ -275,18 +310,25 @@ func (w *World) updateBlockLight(id Vec3, oldTp, newTp int) {
 	}
 	wasOpaque := aoOccludes(oldTp)
 	nowOpaque := aoOccludes(newTp)
-	if wasOpaque == nowOpaque {
-		return
+	opacityChanged := wasOpaque != nowOpaque
+	emissionChanged := blockEmission(oldTp) != blockEmission(newTp)
+	if !opacityChanged && !emissionChanged {
+		return // neither skylight nor block light is affected
 	}
 	w.lightMu.Lock()
 	defer w.lightMu.Unlock()
 	w.resetLightCache()
 	touched := make(map[Vec3]bool)
-	if nowOpaque {
-		lightPlaceBlock(w, id, touched)
-	} else {
-		lightRemoveBlock(w, id, WorldHeight-1, touched)
+	// Skylight only cares about opacity.
+	if opacityChanged {
+		if nowOpaque {
+			lightPlaceBlock(w, id, touched)
+		} else {
+			lightRemoveBlock(w, id, WorldHeight-1, touched)
+		}
 	}
+	// Block light cares about opacity and emission.
+	w.updateBlockLightAt(id, oldTp, newTp, touched)
 	w.markLightDirty(touched)
 }
 
@@ -298,7 +340,7 @@ func IsPlant(tp int) bool {
 }
 
 func IsTransparent(tp int) bool {
-	if IsPlant(tp) {
+	if IsPlant(tp) || isTorch(tp) {
 		return true
 	}
 	switch tp {
@@ -317,7 +359,7 @@ func aoOccludes(tp int) bool {
 }
 
 func IsObstacle(tp int) bool {
-	if IsPlant(tp) {
+	if IsPlant(tp) || isTorch(tp) {
 		return false
 	}
 	switch tp {
