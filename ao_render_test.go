@@ -60,6 +60,9 @@ func TestAORendersDarkening(t *testing.T) {
 		{Name: "camera", Type: glhf.Vec3},
 		{Name: "fogdis", Type: glhf.Float},
 		{Name: "aoflag", Type: glhf.Float},
+		{Name: "sundir", Type: glhf.Vec3},
+		{Name: "daylight", Type: glhf.Float},
+		{Name: "skycolor", Type: glhf.Vec3},
 	}, blockVertexSource, blockFragmentSource)
 	if err != nil {
 		t.Fatalf("shader compile failed: %v", err)
@@ -91,7 +94,7 @@ func TestAORendersDarkening(t *testing.T) {
 	view := mgl32.LookAtV(mgl32.Vec3{0, 3, 0}, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 0, 1})
 	matrix := proj.Mul4(view)
 
-	render := func(occ func(dx, dy, dz int) bool, aoflag float32, lightAt func(dx, dy, dz int) float32) []uint8 {
+	render := func(occ func(dx, dy, dz int) bool, aoflag float32, lightAt func(dx, dy, dz int) float32, daylight float32) []uint8 {
 		data := makeCubeData([]float32{}, showTop, Vec3{0, 0, 0}, blockTex, occ, lightAt)
 		mesh := NewMesh(shader, data)
 		defer mesh.Release()
@@ -107,6 +110,9 @@ func TestAORendersDarkening(t *testing.T) {
 		shader.SetUniformAttr(1, mgl32.Vec3{0, 0, 0})
 		shader.SetUniformAttr(2, float32(1000)) // huge fog distance -> no fog
 		shader.SetUniformAttr(3, aoflag)
+		shader.SetUniformAttr(4, mgl32.Vec3{0, 1, -0.3}.Normalize()) // sun overhead
+		shader.SetUniformAttr(5, daylight)
+		shader.SetUniformAttr(6, skyDay)
 		mesh.Draw()
 		texture.End()
 		shader.End()
@@ -119,9 +125,9 @@ func TestAORendersDarkening(t *testing.T) {
 
 	// Occluders on two edges of one corner -> that corner is fully dark (AO=0).
 	occluded := occAt([3]int{1, 1, 0}, [3]int{0, 1, 1})
-	aoPix := render(occluded, 1, lightFull)     // AO on
-	flatPix := render(aoOpen, 1, lightFull)     // no occluders, AO on
-	togglePix := render(occluded, 0, lightFull) // same occluders, AO toggled off
+	aoPix := render(occluded, 1, lightFull, 1)     // AO on
+	flatPix := render(aoOpen, 1, lightFull, 1)     // no occluders, AO on
+	togglePix := render(occluded, 0, lightFull, 1) // same occluders, AO toggled off
 
 	aoMin, aoMax, aoN := faceLumaStats(aoPix)
 	flatMin, flatMax, flatN := faceLumaStats(flatPix)
@@ -157,9 +163,9 @@ func TestAORendersDarkening(t *testing.T) {
 
 	// --- Skylight: the per-vertex light value scales surface brightness, and 0
 	// (a fully enclosed cave) renders black. AO off to isolate the light term. ---
-	lit := centerLuma(render(aoOpen, 0, lightConst(1.0)))
-	dim := centerLuma(render(aoOpen, 0, lightConst(0.4)))
-	dark := centerLuma(render(aoOpen, 0, lightConst(0.0)))
+	lit := centerLuma(render(aoOpen, 0, lightConst(1.0), 1))
+	dim := centerLuma(render(aoOpen, 0, lightConst(0.4), 1))
+	dark := centerLuma(render(aoOpen, 0, lightConst(0.0), 1))
 	t.Logf("skylight centre luma: lit=%d dim=%d dark=%d", lit, dim, dark)
 
 	if lit < 60 {
@@ -170,6 +176,24 @@ func TestAORendersDarkening(t *testing.T) {
 	}
 	if !(dim > dark+15 && dim < lit-15) {
 		t.Errorf("dim light should sit between dark and lit: dark=%d dim=%d lit=%d", dark, dim, lit)
+	}
+
+	// --- Day-night: the daylight level scales sky-lit surfaces. A sky-exposed
+	// face is much darker at night than at noon, but not black (moonlight);
+	// a cave (light 0) is black at any daylight level. ---
+	noon := centerLuma(render(aoOpen, 0, lightConst(1.0), 1.0))
+	night := centerLuma(render(aoOpen, 0, lightConst(1.0), 0.1))
+	caveNight := centerLuma(render(aoOpen, 0, lightConst(0.0), 0.1))
+	t.Logf("day-night centre luma: noon=%d night=%d caveNight=%d", noon, night, caveNight)
+
+	if night >= noon/2 {
+		t.Errorf("night surface (%d) should be much darker than noon (%d)", night, noon)
+	}
+	if night < 2 {
+		t.Errorf("night surface should keep faint moonlight, got %d", night)
+	}
+	if caveNight > 2 {
+		t.Errorf("cave stays black regardless of daylight, got %d", caveNight)
 	}
 }
 

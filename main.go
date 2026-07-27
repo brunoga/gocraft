@@ -352,7 +352,9 @@ func (g *Game) Update() {
 
 		g.handleKeyInput(dt)
 
-		gl.ClearColor(0.57, 0.71, 0.77, 1)
+		// Clear to the current sky colour so the horizon matches the time of day.
+		sky := gameClock.SkyColor(now)
+		gl.ClearColor(sky.X(), sky.Y(), sky.Z(), 1)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
 		g.blockRender.Draw()
@@ -389,6 +391,8 @@ func (f *FPS) Fps() int {
 }
 
 func run() {
+	gameClock = NewGameClock(*dayLength)
+
 	err := LoadTextureDesc()
 	if err != nil {
 		log.Fatal(err)
