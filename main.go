@@ -450,6 +450,15 @@ func (g *Game) preload() {
 	if total == 0 {
 		return
 	}
+	// Generate and light every needed chunk up front in one batch, so the
+	// terrain generation and the parallel light seeding fan out across all
+	// cores instead of trickling through the 4-at-a-time mesh loop.
+	ids := make([]Vec3, 0, total)
+	for id := range needed {
+		ids = append(ids, id)
+	}
+	g.world.Chunks(ids)
+
 	// Cap the wait so a failing chunk fetch (e.g. a dead server) can't hang the
 	// game on the loading screen forever.
 	start := glfw.GetTime()
