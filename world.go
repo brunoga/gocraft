@@ -108,62 +108,9 @@ func (w *World) peekChunk(cid Vec3) *Chunk {
 	return v.(*Chunk)
 }
 
-// seedChunkLight computes the initial skylight for a freshly loaded chunk and
-// stitches it to already-loaded horizontal neighbours. It must be called after
-// the chunk is stored in the cache.
-func (w *World) seedChunkLight(c *Chunk) {
-	w.lightMu.Lock()
-	defer w.lightMu.Unlock()
-	w.resetLightCache()
-
-	// Only seed from just above the tallest block down; the empty sky above is
-	// implicitly full daylight and never sampled by meshing.
-	top := lightTop(c)
-	touched := make(map[Vec3]bool)
-	var q []Vec3
-	bx, bz := c.id.X*ChunkWidth, c.id.Z*ChunkWidth
-	for dx := 0; dx < ChunkWidth; dx++ {
-		for dz := 0; dz < ChunkWidth; dz++ {
-			q = append(q, seedSkyColumn(w, bx+dx, bz+dz, top, touched)...)
-		}
-	}
-	q = append(q, w.borderLightSources(c)...)
-	propagateIncrease(w, q, touched)
-	w.markLightDirty(touched)
-}
-
-// lightTop is the highest cell that needs lighting for a chunk: one above its
-// tallest block, clamped to the world height.
-func lightTop(c *Chunk) int {
-	top := c.maxY + 1
-	if top > WorldHeight-1 {
-		top = WorldHeight - 1
-	}
-	return top
-}
-
-// borderLightSources returns the lit cells of already-loaded neighbour chunks
-// along c's four side borders, so their light can flow into c (and c's can flow
-// back out during propagation).
-func (w *World) borderLightSources(c *Chunk) []Vec3 {
-	var srcs []Vec3
-	bx, bz := c.id.X*ChunkWidth, c.id.Z*ChunkWidth
-	top := lightTop(c)
-	consider := func(p Vec3) {
-		if w.loaded(p) && w.light(p) > 0 {
-			srcs = append(srcs, p)
-		}
-	}
-	for y := 0; y <= top; y++ {
-		for k := 0; k < ChunkWidth; k++ {
-			consider(Vec3{bx - 1, y, bz + k})          // -X neighbour
-			consider(Vec3{bx + ChunkWidth, y, bz + k}) // +X neighbour
-			consider(Vec3{bx + k, y, bz - 1})          // -Z neighbour
-			consider(Vec3{bx + k, y, bz + ChunkWidth}) // +Z neighbour
-		}
-	}
-	return srcs
-}
+// lightTop is the highest cell seeding fills: the top of the world. Cells above
+// are handled by the WorldHeight guard in light().
+func lightTop(*Chunk) int { return WorldHeight - 1 }
 
 // markLightDirty records the chunks containing the touched cells so the render
 // loop re-meshes them. Callers must hold lightMu.
@@ -387,10 +334,11 @@ func (w *World) HasBlock(id Vec3) bool {
 	return tp != -1 && tp != 0
 }
 
-func (w *World) Chunk(id Vec3) *Chunk {
-	p, ok := w.loadChunk(id)
-	if ok {
-		return p
+// genChunk generates and stores a chunk WITHOUT seeding its light. It returns
+// nil if the chunk already exists or generation fails.
+func (w *World) genChunk(id Vec3) *Chunk {
+	if _, ok := w.loadChunk(id); ok {
+		return nil
 	}
 	chunk := NewChunk(id)
 	blocks := makeChunkMap(id)
@@ -417,25 +365,61 @@ func (w *World) Chunk(id Vec3) *Chunk {
 		store.UpdateBlock(bid, w)
 	})
 	w.storeChunk(id, chunk)
-	w.seedChunkLight(chunk)
 	return chunk
 }
 
+func (w *World) Chunk(id Vec3) *Chunk {
+	if c, ok := w.loadChunk(id); ok {
+		return c
+	}
+	c := w.genChunk(id)
+	if c == nil {
+		// Already loaded by a concurrent caller, or generation failed.
+		if existing, ok := w.loadChunk(id); ok {
+			return existing
+		}
+		return nil
+	}
+	w.seedChunkBatch([]*Chunk{c})
+	return c
+}
+
 func (w *World) Chunks(ids []Vec3) []*Chunk {
-	ch := make(chan *Chunk)
-	var chunks []*Chunk
+	// Generate all chunks in parallel without seeding light...
+	type result struct {
+		c     *Chunk
+		fresh bool
+	}
+	ch := make(chan result)
 	for _, id := range ids {
 		id := id
 		go func() {
-			ch <- w.Chunk(id)
+			if existing, ok := w.loadChunk(id); ok {
+				ch <- result{existing, false}
+				return
+			}
+			c := w.genChunk(id)
+			if c == nil {
+				existing, _ := w.loadChunk(id)
+				ch <- result{existing, false}
+				return
+			}
+			ch <- result{c, true}
 		}()
 	}
+	var chunks, fresh []*Chunk
 	for range ids {
-		chunk := <-ch
-		if chunk != nil {
-			chunks = append(chunks, chunk)
+		r := <-ch
+		if r.c != nil {
+			chunks = append(chunks, r.c)
+		}
+		if r.fresh {
+			fresh = append(fresh, r.c)
 		}
 	}
+	// ...then seed the freshly generated ones as one batch: phase-1 parallel,
+	// phase-2 border stitch.
+	w.seedChunkBatch(fresh)
 	return chunks
 }
 
