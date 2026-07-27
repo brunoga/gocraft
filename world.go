@@ -67,6 +67,38 @@ func (w *World) Collide(pos mgl32.Vec3) (mgl32.Vec3, bool) {
 	return mgl32.Vec3{x, y, z}, stop
 }
 
+// maxCollideStep is the largest movement (in blocks) resolved in a single
+// Collide call. Movement longer than this is subdivided by CollideStepped.
+const maxCollideStep = 0.2
+
+// CollideStepped resolves movement from `from` to `to` by walking the path in
+// steps no larger than maxCollideStep and resolving collisions at each step.
+// Collide only pushes out of blocks adjacent to a single position, so a large
+// per-frame move (e.g. while flying at 5x speed) could otherwise skip straight
+// through a thin wall. Stepping keeps every intermediate position collision-free
+// and lets the player slide along surfaces. It returns the final position and
+// whether vertical movement was stopped (used to zero out fall velocity).
+func (w *World) CollideStepped(from, to mgl32.Vec3) (mgl32.Vec3, bool) {
+	delta := to.Sub(from)
+	dist := delta.Len()
+	if dist < maxCollideStep {
+		return w.Collide(to)
+	}
+
+	steps := int(dist/maxCollideStep) + 1
+	step := delta.Mul(1 / float32(steps))
+	pos := from
+	stop := false
+	for i := 0; i < steps; i++ {
+		var s bool
+		pos, s = w.Collide(pos.Add(step))
+		if s {
+			stop = true
+		}
+	}
+	return pos, stop
+}
+
 func (w *World) HitTest(pos mgl32.Vec3, vec mgl32.Vec3) (*Vec3, *Vec3) {
 	var (
 		maxLen = float32(8.0)
