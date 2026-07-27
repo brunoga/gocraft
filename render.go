@@ -101,59 +101,104 @@ func NewBlockRender() (*BlockRender, error) {
 	return r, nil
 }
 
-func (r *BlockRender) addChunkMesh(c *Chunk, onmainthread bool) {
+// buildChunkFaces builds a chunk's vertex data (the CPU-heavy part of meshing).
+// It reads light and blocks under a read lock, using a per-call chunk cache so
+// parallel workers don't contend on the LRU's lock. The returned buffer comes
+// from facePool and must be handed to uploadChunkMesh, which returns it.
+func (r *BlockRender) buildChunkFaces(c *Chunk) []float32 {
 	facedata := r.facePool.Get().([]float32)
 
-	// Hold lightMu while sampling per-voxel light so we don't race with edits or
-	// other chunks' light updates. Only the CPU face-building is under the lock;
-	// the GL upload in build() runs after it is released.
-	game.world.lightMu.Lock()
-	game.world.resetLightCache()
-	c.RangeBlocks(func(id Vec3, w int) {
-		if w == 0 {
+	w := game.world
+	w.lightMu.RLock()
+	defer w.lightMu.RUnlock()
+
+	// A mesh only touches this chunk and its immediate neighbours, so a tiny
+	// local cache turns almost every lookup into a map hit instead of a
+	// lock-taking LRU peek. It is per-call, so nothing is shared between workers.
+	cache := make(map[Vec3]*Chunk, 9)
+	chunkAt := func(cid Vec3) *Chunk {
+		if ch, ok := cache[cid]; ok {
+			return ch
+		}
+		ch := w.peekChunk(cid)
+		cache[cid] = ch
+		return ch
+	}
+	blockAt := func(p Vec3) int {
+		ch := chunkAt(p.Chunkid())
+		if ch == nil {
+			return -1
+		}
+		return ch.Block(p)
+	}
+	cellLight := func(p Vec3) uint8 {
+		if p.Y >= WorldHeight {
+			return MaxLight
+		}
+		if p.Y < 0 {
+			return 0
+		}
+		ch := chunkAt(p.Chunkid())
+		if ch == nil {
+			return MaxLight
+		}
+		return ch.getLight(p)
+	}
+
+	c.RangeBlocks(func(id Vec3, tp int) {
+		if tp == 0 {
 			log.Panicf("unexpect 0 item type on %v", id)
 		}
 		show := [...]bool{
-			IsTransparent(game.world.Block(id.Left())),
-			IsTransparent(game.world.Block(id.Right())),
-			IsTransparent(game.world.Block(id.Up())),
-			IsTransparent(game.world.Block(id.Down())) && id.Y != 0,
-			IsTransparent(game.world.Block(id.Front())),
-			IsTransparent(game.world.Block(id.Back())),
+			IsTransparent(blockAt(id.Left())),
+			IsTransparent(blockAt(id.Right())),
+			IsTransparent(blockAt(id.Up())),
+			IsTransparent(blockAt(id.Down())) && id.Y != 0,
+			IsTransparent(blockAt(id.Front())),
+			IsTransparent(blockAt(id.Back())),
 		}
 		// lightAt returns the skylight (0..1) of the neighbouring air cell.
 		lightAt := func(dx, dy, dz int) float32 {
-			return float32(game.world.light(Vec3{id.X + dx, id.Y + dy, id.Z + dz})) / float32(MaxLight)
+			return float32(cellLight(Vec3{id.X + dx, id.Y + dy, id.Z + dz})) / float32(MaxLight)
 		}
-		if IsPlant(game.world.Block(id)) {
-			facedata = makePlantData(facedata, show, id, tex.Texture(w), lightAt)
+		if IsPlant(blockAt(id)) {
+			facedata = makePlantData(facedata, show, id, tex.Texture(tp), lightAt)
 		} else {
 			// occ samples whether the neighbouring block at the given offset
 			// occludes ambient light, used to compute per-vertex AO.
 			occ := func(dx, dy, dz int) bool {
-				return aoOccludes(game.world.Block(Vec3{id.X + dx, id.Y + dy, id.Z + dz}))
+				return aoOccludes(blockAt(Vec3{id.X + dx, id.Y + dy, id.Z + dz}))
 			}
-			facedata = makeCubeData(facedata, show, id, tex.Texture(w), occ, lightAt)
+			facedata = makeCubeData(facedata, show, id, tex.Texture(tp), occ, lightAt)
 		}
 	})
-	game.world.lightMu.Unlock()
-	n := len(facedata) / (r.shader.VertexFormat().Size() / 4)
-	log.Printf("chunk faces:%d", n/6)
-	// build consumes facedata (NewMesh copies it into a GL buffer) and only
-	// then returns the buffer to the pool. Returning it earlier would let the
-	// background loop reuse and overwrite it before NewMesh runs on the main
-	// thread in the non-blocking path.
-	build := func() {
-		mesh := NewMesh(r.shader, facedata)
-		mesh.Id = c.Id()
-		r.meshcache.Store(c.Id(), mesh)
-		r.facePool.Put(facedata[:0])
+	return facedata
+}
+
+// uploadChunkMesh turns face data into a GL mesh and caches it. It must run on
+// the GL (main) thread and returns the face buffer to the pool.
+func (r *BlockRender) uploadChunkMesh(c *Chunk, facedata []float32) {
+	mesh := NewMesh(r.shader, facedata)
+	mesh.Id = c.Id()
+	r.meshcache.Store(c.Id(), mesh)
+	r.facePool.Put(facedata[:0])
+}
+
+// buildChunksParallel builds vertex data for all chunks concurrently, returning
+// one face buffer per chunk (aligned with chunks). The caller uploads them on
+// the GL thread.
+func (r *BlockRender) buildChunksParallel(chunks []*Chunk) [][]float32 {
+	datas := make([][]float32, len(chunks))
+	var wg sync.WaitGroup
+	for i, c := range chunks {
+		wg.Add(1)
+		go func(i int, c *Chunk) {
+			defer wg.Done()
+			datas[i] = r.buildChunkFaces(c)
+		}(i, c)
 	}
-	if onmainthread {
-		build()
-	} else {
-		mainthread.CallNonBlock(build)
-	}
+	wg.Wait()
+	return datas
 }
 
 // call on mainthread
@@ -277,18 +322,6 @@ func neededChunks() map[Vec3]bool {
 	return needed
 }
 
-// meshedCount reports how many of the given chunk ids have a built, non-dirty
-// mesh in the cache.
-func (r *BlockRender) meshedCount(ids map[Vec3]bool) int {
-	n := 0
-	for id := range ids {
-		if m, ok := r.meshcache.Load(id); ok && !m.(*Mesh).Dirty {
-			n++
-		}
-	}
-	return n
-}
-
 func (r *BlockRender) updateMeshCache() {
 	// Chunks whose light changed (from edits or neighbour loads) must be
 	// re-meshed; mark their cached meshes dirty so the pass below rebuilds them.
@@ -338,10 +371,12 @@ func (r *BlockRender) updateMeshCache() {
 	}
 
 	newChunks := game.world.Chunks(added)
-	for _, c := range newChunks {
-		log.Printf("add cache %v", c.Id())
-		r.addChunkMesh(c, false)
-	}
+	datas := r.buildChunksParallel(newChunks)
+	mainthread.CallNonBlock(func() {
+		for i, c := range newChunks {
+			r.uploadChunkMesh(c, datas[i])
+		}
+	})
 
 	mainthread.CallNonBlock(func() {
 		for _, mesh := range removedMesh {
@@ -352,29 +387,31 @@ func (r *BlockRender) updateMeshCache() {
 }
 
 // called on mainthread
+// forceChunks is called on the main (GL) thread. It (re)builds the meshes for
+// the given chunks that are missing or dirty, building face data in parallel
+// and uploading inline (we are already on the GL thread, so we must not dispatch
+// back to it).
 func (r *BlockRender) forceChunks(ids []Vec3) {
-	var removedMesh []*Mesh
 	chunks := game.world.Chunks(ids)
+	var build []*Chunk
+	var removedMesh []*Mesh
 	for _, chunk := range chunks {
-		id := chunk.Id()
-		imesh, ok := r.meshcache.Load(id)
-		var mesh *Mesh
-		if ok {
-			mesh = imesh.(*Mesh)
-		}
-		if ok && !mesh.Dirty {
+		imesh, ok := r.meshcache.Load(chunk.Id())
+		if ok && !imesh.(*Mesh).Dirty {
 			continue
 		}
-		r.addChunkMesh(chunk, true)
+		build = append(build, chunk)
 		if ok {
-			removedMesh = append(removedMesh, mesh)
+			removedMesh = append(removedMesh, imesh.(*Mesh))
 		}
 	}
-	mainthread.CallNonBlock(func() {
-		for _, mesh := range removedMesh {
-			mesh.Release()
-		}
-	})
+	datas := r.buildChunksParallel(build)
+	for i, c := range build {
+		r.uploadChunkMesh(c, datas[i])
+	}
+	for _, mesh := range removedMesh {
+		mesh.Release()
+	}
 }
 
 func (r *BlockRender) forcePlayerChunks() {

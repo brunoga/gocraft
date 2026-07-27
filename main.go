@@ -450,33 +450,43 @@ func (g *Game) preload() {
 	if total == 0 {
 		return
 	}
-	// Generate and light every needed chunk up front in one batch, so the
-	// terrain generation and the parallel light seeding fan out across all
-	// cores instead of trickling through the 4-at-a-time mesh loop.
+	start := glfw.GetTime()
+
+	// Generate and light every needed chunk up front in one batch, so terrain
+	// generation and the parallel light seeding fan out across all cores.
 	ids := make([]Vec3, 0, total)
 	for id := range needed {
 		ids = append(ids, id)
 	}
-	g.world.Chunks(ids)
+	chunks := g.world.Chunks(ids)
 
-	// Cap the wait so a failing chunk fetch (e.g. a dead server) can't hang the
-	// game on the loading screen forever.
-	start := glfw.GetTime()
-	deadline := start + 30
-	for {
-		loaded := g.blockRender.meshedCount(needed)
-		g.drawLoading(float64(loaded) / float64(total))
-		if loaded >= total || glfw.GetTime() > deadline {
-			log.Printf("preloaded %d/%d chunks in %.1fs", loaded, total, glfw.GetTime()-start)
-			break
-		}
-		g.blockRender.checkChunks() // nudge the background loader
+	// Build + upload meshes in parallel batches, showing progress. Face-building
+	// (the CPU-heavy part of meshing) runs across cores; only the GL upload is
+	// serial on the main thread.
+	const batch = 32
+	for i := 0; i < len(chunks); i += batch {
 		if g.win.ShouldClose() {
 			g.closed = true
 			return
 		}
-		time.Sleep(20 * time.Millisecond)
+		end := i + batch
+		if end > len(chunks) {
+			end = len(chunks)
+		}
+		sub := chunks[i:end]
+		datas := g.blockRender.buildChunksParallel(sub)
+		mainthread.Call(func() {
+			for j, c := range sub {
+				g.blockRender.uploadChunkMesh(c, datas[j])
+			}
+		})
+		g.drawLoading(float64(end) / float64(len(chunks)))
 	}
+
+	// Everything is meshed with final light; discard the "needs re-mesh" set the
+	// seeding queued so the first frame doesn't re-mesh the whole world.
+	g.world.DrainLightDirty()
+	log.Printf("preloaded %d chunks in %.1fs", total, glfw.GetTime()-start)
 	mainthread.Call(func() { g.win.SetTitle("gocraft") })
 }
 
