@@ -190,6 +190,10 @@ func (g *Game) onKeyCallback(win *glfw.Window, key glfw.Key, scancode int, actio
 		if mods&glfw.ModAlt != 0 {
 			g.toggleFullscreen()
 		}
+	case glfw.KeyO:
+		// O toggles ambient occlusion.
+		on := g.blockRender.ToggleAO()
+		log.Printf("ambient occlusion: %v", on)
 	case glfw.KeyTab:
 		g.camera.FlipFlying()
 	case glfw.KeySpace:

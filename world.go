@@ -167,6 +167,13 @@ func IsTransparent(tp int) bool {
 	}
 }
 
+// aoOccludes reports whether a block type casts ambient occlusion onto its
+// neighbours. Opaque solid blocks occlude; air, unloaded chunks (-1), plants,
+// glass and leaves (all transparent) do not.
+func aoOccludes(tp int) bool {
+	return !IsTransparent(tp)
+}
+
 func IsObstacle(tp int) bool {
 	if IsPlant(tp) {
 		return false

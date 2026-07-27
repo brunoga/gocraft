@@ -42,6 +42,7 @@ Suppose `$GOPATH/bin` is in your `PATH` env, use command below to run.
 - SPACE to jump.
 - Left and right click to add/remove block.
 - E,R to cycle through the blocks.
+- O to toggle ambient occlusion.
 - Alt+F to toggle fullscreen.
 
 By default fullscreen uses the current desktop resolution. Pass `-fs WxH`
@@ -65,7 +66,7 @@ Local cache is saved as `cache_$server.db`, you can use `gocraft -db xxx.db` to 
 
 - [x] Persistent changed blocks
 - [x] Multiplayer support
-- [ ] Ambient Occlusion support
+- [x] Ambient Occlusion support
 
 ## Implementation Details
 
