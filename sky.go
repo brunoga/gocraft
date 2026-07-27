@@ -39,7 +39,7 @@ func newSkyGL() (*SkyRender, error) {
 		glhf.Attr{Name: "campos", Type: glhf.Vec3},
 		glhf.Attr{Name: "sundir", Type: glhf.Vec3},
 		glhf.Attr{Name: "daylight", Type: glhf.Float},
-	}, skyVertexSource, skyFragmentSource)
+	}, skyVertexSource, withSkyCommon(skyFragmentSource))
 	if err != nil {
 		return nil, err
 	}

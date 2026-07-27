@@ -81,8 +81,7 @@ func NewBlockRender() (*BlockRender, error) {
 			glhf.Attr{Name: "aoflag", Type: glhf.Float},
 			glhf.Attr{Name: "sundir", Type: glhf.Vec3},
 			glhf.Attr{Name: "daylight", Type: glhf.Float},
-			glhf.Attr{Name: "skycolor", Type: glhf.Vec3},
-		}, blockVertexSource, blockFragmentSource)
+		}, blockVertexSource, withSkyCommon(blockFragmentSource))
 
 		if err != nil {
 			return
@@ -429,7 +428,6 @@ func (r *BlockRender) drawChunks() {
 	now := game.prevtime
 	r.shader.SetUniformAttr(4, gameClock.SunDir(now))
 	r.shader.SetUniformAttr(5, gameClock.Daylight(now))
-	r.shader.SetUniformAttr(6, gameClock.SkyColor(now))
 
 	planes := frustumPlanes(&mat)
 	r.stat = Stat{}
@@ -463,7 +461,6 @@ func (r *BlockRender) drawItem() {
 	// fixed sun angle and full daylight.
 	r.shader.SetUniformAttr(4, mgl32.Vec3{-1, 1, -1}.Normalize())
 	r.shader.SetUniformAttr(5, float32(1))
-	r.shader.SetUniformAttr(6, skyDay)
 	r.item.Draw()
 }
 

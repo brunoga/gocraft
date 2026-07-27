@@ -81,8 +81,16 @@ func TestSkyRendersSunMoonGradient(t *testing.T) {
 	}
 	sunSideLuma := centerLuma(render(mgl32.Vec3{1, 0.05, 0}, duskSun, 0.5))
 	antiLuma := centerLuma(render(mgl32.Vec3{-1, 0.05, 0}, duskSun, 0.5))
-	if sunSideLuma <= antiLuma {
-		t.Errorf("dusk sun-side (%d) should be brighter than opposite (%d)", sunSideLuma, antiLuma)
+	// The twilight gradient is strong: the anti-sun side is well under half the
+	// sun side's brightness.
+	if int(antiLuma)*2 >= int(sunSideLuma) {
+		t.Errorf("dusk twilight gradient too weak: sun-side=%d anti-sun=%d", sunSideLuma, antiLuma)
+	}
+	// The anti-sun side is specifically darkened by twilight: the same view
+	// direction is brighter under a high midday sun than at dusk.
+	antiNoon := centerLuma(render(mgl32.Vec3{-1, 0.05, 0}, mgl32.Vec3{0, 1, -0.35}, 1.0))
+	if antiLuma >= antiNoon {
+		t.Errorf("anti-sun horizon should be darker at dusk (%d) than midday (%d)", antiLuma, antiNoon)
 	}
 
 	// 3) Night sky is much darker than day sky for the same upward view.

@@ -5,10 +5,11 @@ in float diff;
 in float fog_factor;
 in float AO;
 in float Light;
+in vec3 Vdir;
 uniform sampler2D tex;
 uniform float aoflag;
 uniform float daylight;
-uniform vec3 skycolor;
+uniform vec3 sundir;
 
 out vec4 FragColor;
 
@@ -36,6 +37,9 @@ void main() {
     // Day-night cycle: scale sky-lit surfaces by the current daylight level so
     // the world darkens at night. Caves (Light=0) stay black at all hours.
     color *= daylight;
-    color = mix(color, skycolor, fog_factor);
+    // Fog fades distant terrain into the sky gradient in the view direction, so
+    // the horizon matches the sky exactly (same skyBackground, minus the discs).
+    vec3 fogcolor = skyBackground(normalize(Vdir), sundir, daylight);
+    color = mix(color, fogcolor, fog_factor);
     FragColor = vec4(color, 1);
 }
