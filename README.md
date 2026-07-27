@@ -37,10 +37,15 @@ Suppose `$GOPATH/bin` is in your `PATH` env, use command below to run.
 ## How to play
 
 - W, S, A, D to move around.
+- Hold Left Shift while moving forward to run.
 - TAB to toggle flying mode.
 - SPACE to jump.
 - Left and right click to add/remove block.
 - E,R to cycle through the blocks.
+- Alt+F to toggle fullscreen.
+
+By default fullscreen uses the current desktop resolution. Pass `-fs WxH`
+(e.g. `gocraft -fs 1920x1080`) to force a specific fullscreen resolution.
 
 ## Multiplayer
 
