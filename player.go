@@ -88,11 +88,12 @@ func NewPlayerRender() (*PlayerRender, error) {
 			glhf.Attr{Name: "pos", Type: glhf.Vec3},
 			glhf.Attr{Name: "tex", Type: glhf.Vec2},
 			glhf.Attr{Name: "normal", Type: glhf.Vec3},
-			// The player avatar reuses makeCubeData, which emits per-vertex ao and
-			// light values (both 1 here). The attributes must be declared so the
+			// The player avatar reuses makeCubeData, which emits per-vertex ao,
+			// light and blocklight values. The attributes must be declared so the
 			// vertex stride matches; the player shader references them as no-ops.
 			glhf.Attr{Name: "ao", Type: glhf.Float},
 			glhf.Attr{Name: "light", Type: glhf.Float},
+			glhf.Attr{Name: "blocklight", Type: glhf.Float},
 		}, glhf.AttrFormat{
 			glhf.Attr{Name: "matrix", Type: glhf.Mat4},
 		}, playerVertexSource, playerFragmentSource)
@@ -125,7 +126,7 @@ func (r *PlayerRender) UpdateOrAdd(id int32, s proto.PlayerState) {
 	p, ok := r.players[id]
 	if !ok {
 		log.Printf("add new player %d", id)
-		cubeData := makeCubeData([]float32{}, [...]bool{true, true, true, true, true, true}, Vec3{0, 0, 0}, tex.Texture(64), aoOpen, lightFull)
+		cubeData := makeCubeData([]float32{}, [...]bool{true, true, true, true, true, true}, Vec3{0, 0, 0}, tex.Texture(64), aoOpen, lightFull, blockNone)
 		var mesh *Mesh
 		mainthread.Call(func() {
 			mesh = NewMesh(r.shader, cubeData)

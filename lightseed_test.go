@@ -36,8 +36,11 @@ func buildTestChunk(cid Vec3) *Chunk {
 func (w *World) seedRegionReference(chunks []*Chunk) {
 	for _, c := range chunks {
 		c.light = nil
+		c.blockLight = nil
 	}
 	w.resetLightCache()
+
+	// Skylight: seed all sky columns, then one global propagation.
 	var q []Vec3
 	for _, c := range chunks {
 		bx, bz := c.id.X*ChunkWidth, c.id.Z*ChunkWidth
@@ -49,6 +52,19 @@ func (w *World) seedRegionReference(chunks []*Chunk) {
 		}
 	}
 	propagateIncrease(w, q, nil)
+
+	// Block light: seed all emitters, then one global propagation.
+	var bq []Vec3
+	bg := blockGrid{w}
+	for _, c := range chunks {
+		c.RangeBlocks(func(id Vec3, tp int) {
+			if e := blockEmission(tp); e > 0 {
+				bg.setLight(id, e)
+				bq = append(bq, id)
+			}
+		})
+	}
+	propagateIncrease(bg, bq, nil)
 }
 
 func TestParallelSeedMatchesReference(t *testing.T) {

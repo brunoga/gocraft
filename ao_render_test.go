@@ -55,6 +55,7 @@ func TestAORendersDarkening(t *testing.T) {
 		{Name: "normal", Type: glhf.Vec3},
 		{Name: "ao", Type: glhf.Float},
 		{Name: "light", Type: glhf.Float},
+		{Name: "blocklight", Type: glhf.Float},
 	}, glhf.AttrFormat{
 		{Name: "matrix", Type: glhf.Mat4},
 		{Name: "camera", Type: glhf.Vec3},
@@ -93,8 +94,8 @@ func TestAORendersDarkening(t *testing.T) {
 	view := mgl32.LookAtV(mgl32.Vec3{0, 3, 0}, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 0, 1})
 	matrix := proj.Mul4(view)
 
-	render := func(occ func(dx, dy, dz int) bool, aoflag float32, lightAt func(dx, dy, dz int) float32, daylight float32) []uint8 {
-		data := makeCubeData([]float32{}, showTop, Vec3{0, 0, 0}, blockTex, occ, lightAt)
+	render := func(occ func(dx, dy, dz int) bool, aoflag float32, lightAt func(dx, dy, dz int) float32, daylight float32, blockAt func(dx, dy, dz int) float32) []uint8 {
+		data := makeCubeData([]float32{}, showTop, Vec3{0, 0, 0}, blockTex, occ, lightAt, blockAt)
 		mesh := NewMesh(shader, data)
 		defer mesh.Release()
 
@@ -123,9 +124,9 @@ func TestAORendersDarkening(t *testing.T) {
 
 	// Occluders on two edges of one corner -> that corner is fully dark (AO=0).
 	occluded := occAt([3]int{1, 1, 0}, [3]int{0, 1, 1})
-	aoPix := render(occluded, 1, lightFull, 1)     // AO on
-	flatPix := render(aoOpen, 1, lightFull, 1)     // no occluders, AO on
-	togglePix := render(occluded, 0, lightFull, 1) // same occluders, AO toggled off
+	aoPix := render(occluded, 1, lightFull, 1, blockNone)     // AO on
+	flatPix := render(aoOpen, 1, lightFull, 1, blockNone)     // no occluders, AO on
+	togglePix := render(occluded, 0, lightFull, 1, blockNone) // same occluders, AO toggled off
 
 	aoMin, aoMax, aoN := faceLumaStats(aoPix)
 	flatMin, flatMax, flatN := faceLumaStats(flatPix)
@@ -161,9 +162,9 @@ func TestAORendersDarkening(t *testing.T) {
 
 	// --- Skylight: the per-vertex light value scales surface brightness, and 0
 	// (a fully enclosed cave) renders black. AO off to isolate the light term. ---
-	lit := centerLuma(render(aoOpen, 0, lightConst(1.0), 1))
-	dim := centerLuma(render(aoOpen, 0, lightConst(0.4), 1))
-	dark := centerLuma(render(aoOpen, 0, lightConst(0.0), 1))
+	lit := centerLuma(render(aoOpen, 0, lightConst(1.0), 1, blockNone))
+	dim := centerLuma(render(aoOpen, 0, lightConst(0.4), 1, blockNone))
+	dark := centerLuma(render(aoOpen, 0, lightConst(0.0), 1, blockNone))
 	t.Logf("skylight centre luma: lit=%d dim=%d dark=%d", lit, dim, dark)
 
 	if lit < 60 {
@@ -179,9 +180,9 @@ func TestAORendersDarkening(t *testing.T) {
 	// --- Day-night: the daylight level scales sky-lit surfaces. A sky-exposed
 	// face is much darker at night than at noon, but not black (moonlight);
 	// a cave (light 0) is black at any daylight level. ---
-	noon := centerLuma(render(aoOpen, 0, lightConst(1.0), 1.0))
-	night := centerLuma(render(aoOpen, 0, lightConst(1.0), 0.1))
-	caveNight := centerLuma(render(aoOpen, 0, lightConst(0.0), 0.1))
+	noon := centerLuma(render(aoOpen, 0, lightConst(1.0), 1.0, blockNone))
+	night := centerLuma(render(aoOpen, 0, lightConst(1.0), 0.1, blockNone))
+	caveNight := centerLuma(render(aoOpen, 0, lightConst(0.0), 0.1, blockNone))
 	t.Logf("day-night centre luma: noon=%d night=%d caveNight=%d", noon, night, caveNight)
 
 	if night >= noon/2 {
@@ -192,6 +193,17 @@ func TestAORendersDarkening(t *testing.T) {
 	}
 	if caveNight > 2 {
 		t.Errorf("cave stays black regardless of daylight, got %d", caveNight)
+	}
+
+	// --- Block light: a surface with no skylight, at night, still renders bright
+	// if block light (a torch) reaches it -- lit = max(sky*daylight, blocklight). ---
+	torchLit := centerLuma(render(aoOpen, 0, lightConst(0.0), 0.1, lightConst(1.0)))
+	t.Logf("block-light centre luma: caveNight=%d torchLit=%d", caveNight, torchLit)
+	if torchLit < 90 {
+		t.Errorf("block-lit cave face should be bright, got %d", torchLit)
+	}
+	if int(torchLit) <= int(caveNight)+50 {
+		t.Errorf("block light (%d) should light a cave far more than no light (%d)", torchLit, caveNight)
 	}
 }
 
