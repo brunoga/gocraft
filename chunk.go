@@ -58,6 +58,10 @@ type Chunk struct {
 	// indexed by lightIndex. Allocated lazily on first write. Access is
 	// serialized by World.lightMu, not by the sync.Map above.
 	light []uint8
+
+	// maxY tracks the highest block in this chunk, so light seeding can skip the
+	// empty sky above it instead of walking the full world height every column.
+	maxY int
 }
 
 func NewChunk(id Vec3) *Chunk {
@@ -87,6 +91,9 @@ func (c *Chunk) add(id Vec3, w int) {
 		log.Panicf("id %v chunk %v", id, c.id)
 	}
 	c.blocks.Store(id, w)
+	if id.Y > c.maxY {
+		c.maxY = id.Y
+	}
 }
 
 func (c *Chunk) del(id Vec3) {
