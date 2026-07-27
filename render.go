@@ -180,7 +180,8 @@ func (r *BlockRender) buildChunkFaces(c *Chunk) []float32 {
 			IsTransparent(blockAt(id.Front())),
 			IsTransparent(blockAt(id.Back())),
 		}
-		if IsPlant(tp) {
+		if IsPlant(tp) || isFire(tp) {
+			// Plants and fire render as cross-billboards.
 			facedata = makePlantData(facedata, show, id, tex.Texture(tp), lightAt, blockAtLight)
 		} else {
 			// occ samples whether the neighbouring block at the given offset
@@ -229,7 +230,7 @@ func (r *BlockRender) UpdateItem(w int) {
 	pos := Vec3{0, 0, 0}
 	if isTorch(w) {
 		vertices = makeTorchData(vertices, pos, texture, lightFull, blockNone)
-	} else if IsPlant(w) {
+	} else if IsPlant(w) || isFire(w) {
 		vertices = makePlantData(vertices, show, pos, texture, lightFull, blockNone)
 	} else {
 		// The HUD preview has no world neighbours: nothing occludes it and it is

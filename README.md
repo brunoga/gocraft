@@ -14,6 +14,7 @@ A Minecraft like game written in go, just for fun!
 - Day-night cycle: the sun arcs across the sky, shifting the shading angle and sky colour, and the world darkens at night (caves stay black). Set the cycle length with `-daylen <seconds>` (default 600; e.g. `gocraft -daylen 60` for a fast cycle).
 - Rendered sky: a gradient sky (horizon to zenith, with a warm glow on the sun's side at dawn and dusk) plus sun and moon discs that track across the sky as time passes.
 - Torches: place a torch (the first item in the hotbar) to light up caves and dark rooms. Torch light spreads from the torch, dims with distance, and glows even at night.
+- Fire: place fire (the second item in the hotbar) on or next to wood, leaves, or plants and watch it spread to nearby fuel, cast its own flickering block light, and burn itself out to air once the fuel is gone. Fire on non-flammable surroundings simply dies out.
 
 ## Dependencies
 
@@ -45,7 +46,7 @@ Suppose `$GOPATH/bin` is in your `PATH` env, use command below to run.
 - TAB to toggle flying mode.
 - SPACE to jump.
 - Left and right click to add/remove block.
-- E,R to cycle through the blocks.
+- E,R to cycle through the blocks (the torch and fire are the first two items in the hotbar).
 - O to toggle ambient occlusion.
 - Alt+F to toggle fullscreen.
 
