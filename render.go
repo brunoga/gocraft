@@ -91,9 +91,8 @@ func NewBlockRender() (*BlockRender, error) {
 	return r, nil
 }
 
-func (r *BlockRender) makeChunkMesh(c *Chunk, onmainthread bool) *Mesh {
+func (r *BlockRender) addChunkMesh(c *Chunk, onmainthread bool) {
 	facedata := r.facePool.Get().([]float32)
-	defer r.facePool.Put(facedata[:0])
 
 	c.RangeBlocks(func(id Vec3, w int) {
 		if w == 0 {
@@ -115,16 +114,21 @@ func (r *BlockRender) makeChunkMesh(c *Chunk, onmainthread bool) *Mesh {
 	})
 	n := len(facedata) / (r.shader.VertexFormat().Size() / 4)
 	log.Printf("chunk faces:%d", n/6)
-	var mesh *Mesh
-	if onmainthread {
-		mesh = NewMesh(r.shader, facedata)
-	} else {
-		mainthread.Call(func() {
-			mesh = NewMesh(r.shader, facedata)
-		})
+	// build consumes facedata (NewMesh copies it into a GL buffer) and only
+	// then returns the buffer to the pool. Returning it earlier would let the
+	// background loop reuse and overwrite it before NewMesh runs on the main
+	// thread in the non-blocking path.
+	build := func() {
+		mesh := NewMesh(r.shader, facedata)
+		mesh.Id = c.Id()
+		r.meshcache.Store(c.Id(), mesh)
+		r.facePool.Put(facedata[:0])
 	}
-	mesh.Id = c.Id()
-	return mesh
+	if onmainthread {
+		build()
+	} else {
+		mainthread.CallNonBlock(build)
+	}
 }
 
 // call on mainthread
@@ -286,7 +290,7 @@ func (r *BlockRender) updateMeshCache() {
 	newChunks := game.world.Chunks(added)
 	for _, c := range newChunks {
 		log.Printf("add cache %v", c.Id())
-		r.meshcache.Store(c.Id(), r.makeChunkMesh(c, false))
+		r.addChunkMesh(c, false)
 	}
 
 	mainthread.CallNonBlock(func() {
@@ -311,7 +315,7 @@ func (r *BlockRender) forceChunks(ids []Vec3) {
 		if ok && !mesh.Dirty {
 			continue
 		}
-		r.meshcache.Store(id, r.makeChunkMesh(chunk, true))
+		r.addChunkMesh(chunk, true)
 		if ok {
 			removedMesh = append(removedMesh, mesh)
 		}
