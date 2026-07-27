@@ -54,6 +54,7 @@ func TestAORendersDarkening(t *testing.T) {
 		{Name: "tex", Type: glhf.Vec2},
 		{Name: "normal", Type: glhf.Vec3},
 		{Name: "ao", Type: glhf.Float},
+		{Name: "light", Type: glhf.Float},
 	}, glhf.AttrFormat{
 		{Name: "matrix", Type: glhf.Mat4},
 		{Name: "camera", Type: glhf.Vec3},
@@ -90,8 +91,8 @@ func TestAORendersDarkening(t *testing.T) {
 	view := mgl32.LookAtV(mgl32.Vec3{0, 3, 0}, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 0, 1})
 	matrix := proj.Mul4(view)
 
-	render := func(occ func(dx, dy, dz int) bool, aoflag float32) []uint8 {
-		data := makeCubeData([]float32{}, showTop, Vec3{0, 0, 0}, blockTex, occ)
+	render := func(occ func(dx, dy, dz int) bool, aoflag float32, lightAt func(dx, dy, dz int) float32) []uint8 {
+		data := makeCubeData([]float32{}, showTop, Vec3{0, 0, 0}, blockTex, occ, lightAt)
 		mesh := NewMesh(shader, data)
 		defer mesh.Release()
 
@@ -118,9 +119,9 @@ func TestAORendersDarkening(t *testing.T) {
 
 	// Occluders on two edges of one corner -> that corner is fully dark (AO=0).
 	occluded := occAt([3]int{1, 1, 0}, [3]int{0, 1, 1})
-	aoPix := render(occluded, 1)     // AO on
-	flatPix := render(aoOpen, 1)     // no occluders, AO on
-	togglePix := render(occluded, 0) // same occluders, AO toggled off
+	aoPix := render(occluded, 1, lightFull)     // AO on
+	flatPix := render(aoOpen, 1, lightFull)     // no occluders, AO on
+	togglePix := render(occluded, 0, lightFull) // same occluders, AO toggled off
 
 	aoMin, aoMax, aoN := faceLumaStats(aoPix)
 	flatMin, flatMax, flatN := faceLumaStats(flatPix)
@@ -153,6 +154,36 @@ func TestAORendersDarkening(t *testing.T) {
 	if offMin < flatMin-6 {
 		t.Errorf("AO-off render (%d) should match the fully-lit flat face (%d)", offMin, flatMin)
 	}
+
+	// --- Skylight: the per-vertex light value scales surface brightness, and 0
+	// (a fully enclosed cave) renders black. AO off to isolate the light term. ---
+	lit := centerLuma(render(aoOpen, 0, lightConst(1.0)))
+	dim := centerLuma(render(aoOpen, 0, lightConst(0.4)))
+	dark := centerLuma(render(aoOpen, 0, lightConst(0.0)))
+	t.Logf("skylight centre luma: lit=%d dim=%d dark=%d", lit, dim, dark)
+
+	if lit < 60 {
+		t.Errorf("fully-lit face too dark: luma=%d", lit)
+	}
+	if dark > 6 {
+		t.Errorf("unlit (cave) face should be ~black, got luma=%d", dark)
+	}
+	if !(dim > dark+15 && dim < lit-15) {
+		t.Errorf("dim light should sit between dark and lit: dark=%d dim=%d lit=%d", dark, dim, lit)
+	}
+}
+
+// centerLuma returns the luma of the centre pixel of the framebuffer (which the
+// top face covers).
+func centerLuma(buf []uint8) uint8 {
+	i := ((aoH/2)*aoW + aoW/2) * 4
+	r, g, b := int(buf[i]), int(buf[i+1]), int(buf[i+2])
+	return uint8((r*30 + g*59 + b*11) / 100)
+}
+
+// lightConst returns a light sampler that always reports v.
+func lightConst(v float32) func(dx, dy, dz int) float32 {
+	return func(dx, dy, dz int) float32 { return v }
 }
 
 // faceLumaStats returns min/max luma and the count of non-background pixels

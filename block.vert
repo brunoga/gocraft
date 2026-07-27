@@ -4,6 +4,7 @@ in vec3 pos;
 in vec2 tex;
 in vec3 normal;
 in float ao;
+in float light;
 
 uniform mat4 matrix;
 uniform vec3 camera;
@@ -13,6 +14,7 @@ out vec2 Tex;
 out float diff;
 out float fog_factor;
 out float AO;
+out float Light;
 
 const vec3 lightdir = normalize(vec3(-1, 1, -1));
 
@@ -24,4 +26,5 @@ void main() {
     Tex = tex;
     diff = max(0, dot(normal, lightdir));
     AO = ao;
+    Light = light;
 }

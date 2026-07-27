@@ -4,6 +4,7 @@ in vec2 Tex;
 in float diff;
 in float fog_factor;
 in float AO;
+in float Light;
 uniform sampler2D tex;
 uniform float aoflag;
 
@@ -28,6 +29,10 @@ void main() {
     // the effect at runtime (0 = off -> no darkening).
     float ao_factor = mix(1.0, mix(0.35, 1.0, AO), aoflag);
     color *= ao_factor;
+    // Skylight: modulate by how much sky light reaches this surface. Light is 1
+    // under open sky and 0 in a fully enclosed cave (making it black). Block
+    // light sources, when added, fold in here as max(skylight, blocklight).
+    color *= Light;
     color = mix(color, sky_color, fog_factor);
     FragColor = vec4(color, 1);
 }

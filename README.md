@@ -10,6 +10,7 @@ A Minecraft like game written in go, just for fun!
 - Add and Remove blocks.
 - Move and fly.
 - Multiplayer support
+- Sky lighting: caves and enclosed spaces get dark, and overhangs cast soft shadows. Lighting updates as you dig and build.
 
 ## Dependencies
 

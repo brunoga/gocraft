@@ -11,14 +11,141 @@ import (
 type World struct {
 	mutex  sync.Mutex
 	chunks *lru.Cache // map[Vec3]*Chunk
+
+	// lightMu guards all per-voxel light state (Chunk.light) and the light
+	// propagation algorithms. lightDirty collects chunks whose light changed and
+	// therefore need re-meshing; the render loop drains it.
+	lightMu    sync.Mutex
+	lightDirty map[Vec3]bool
 }
 
 func NewWorld() *World {
 	m := (*renderRadius) * (*renderRadius) * 4
 	chunks, _ := lru.New(m)
 	return &World{
-		chunks: chunks,
+		chunks:     chunks,
+		lightDirty: make(map[Vec3]bool),
 	}
+}
+
+// --- lightGrid implementation (see light.go). All methods are lock-free; the
+// high-level operations that call them hold lightMu. ---
+
+func (w *World) blocksLight(p Vec3) bool {
+	if p.Y < 0 {
+		return true
+	}
+	if p.Y >= WorldHeight {
+		return false
+	}
+	return aoOccludes(w.Block(p))
+}
+
+func (w *World) loaded(p Vec3) bool {
+	if p.Y < 0 || p.Y >= WorldHeight {
+		return false
+	}
+	return w.chunks.Contains(p.Chunkid())
+}
+
+func (w *World) light(p Vec3) uint8 {
+	if p.Y >= WorldHeight {
+		return MaxLight
+	}
+	if p.Y < 0 {
+		return 0
+	}
+	c := w.peekChunk(p.Chunkid())
+	if c == nil {
+		// Unloaded neighbour: assume lit so border faces don't show dark seams.
+		return MaxLight
+	}
+	return c.getLight(p)
+}
+
+func (w *World) setLight(p Vec3, v uint8) {
+	if p.Y < 0 || p.Y >= WorldHeight {
+		return
+	}
+	c := w.peekChunk(p.Chunkid())
+	if c == nil {
+		return
+	}
+	c.setLight(p, v)
+}
+
+func (w *World) peekChunk(cid Vec3) *Chunk {
+	v, ok := w.chunks.Peek(cid)
+	if !ok {
+		return nil
+	}
+	return v.(*Chunk)
+}
+
+// seedChunkLight computes the initial skylight for a freshly loaded chunk and
+// stitches it to already-loaded horizontal neighbours. It must be called after
+// the chunk is stored in the cache.
+func (w *World) seedChunkLight(c *Chunk) {
+	w.lightMu.Lock()
+	defer w.lightMu.Unlock()
+
+	touched := make(map[Vec3]bool)
+	var q []Vec3
+	bx, bz := c.id.X*ChunkWidth, c.id.Z*ChunkWidth
+	for dx := 0; dx < ChunkWidth; dx++ {
+		for dz := 0; dz < ChunkWidth; dz++ {
+			q = append(q, seedSkyColumn(w, bx+dx, bz+dz, WorldHeight-1, touched)...)
+		}
+	}
+	q = append(q, w.borderLightSources(c)...)
+	propagateIncrease(w, q, touched)
+	w.markLightDirty(touched)
+}
+
+// borderLightSources returns the lit cells of already-loaded neighbour chunks
+// along c's four side borders, so their light can flow into c (and c's can flow
+// back out during propagation).
+func (w *World) borderLightSources(c *Chunk) []Vec3 {
+	var srcs []Vec3
+	bx, bz := c.id.X*ChunkWidth, c.id.Z*ChunkWidth
+	consider := func(p Vec3) {
+		if w.loaded(p) && w.light(p) > 0 {
+			srcs = append(srcs, p)
+		}
+	}
+	for y := 0; y < WorldHeight; y++ {
+		for k := 0; k < ChunkWidth; k++ {
+			consider(Vec3{bx - 1, y, bz + k})          // -X neighbour
+			consider(Vec3{bx + ChunkWidth, y, bz + k}) // +X neighbour
+			consider(Vec3{bx + k, y, bz - 1})          // -Z neighbour
+			consider(Vec3{bx + k, y, bz + ChunkWidth}) // +Z neighbour
+		}
+	}
+	return srcs
+}
+
+// markLightDirty records the chunks containing the touched cells so the render
+// loop re-meshes them. Callers must hold lightMu.
+func (w *World) markLightDirty(touched map[Vec3]bool) {
+	for p := range touched {
+		w.lightDirty[p.Chunkid()] = true
+	}
+}
+
+// DrainLightDirty returns and clears the set of chunks whose light has changed
+// since the last call.
+func (w *World) DrainLightDirty() []Vec3 {
+	w.lightMu.Lock()
+	defer w.lightMu.Unlock()
+	if len(w.lightDirty) == 0 {
+		return nil
+	}
+	ids := make([]Vec3, 0, len(w.lightDirty))
+	for id := range w.lightDirty {
+		ids = append(ids, id)
+		delete(w.lightDirty, id)
+	}
+	return ids
 }
 
 func (w *World) loadChunk(id Vec3) (*Chunk, bool) {
@@ -139,13 +266,38 @@ func (w *World) BlockChunk(block Vec3) *Chunk {
 func (w *World) UpdateBlock(id Vec3, tp int) {
 	chunk := w.BlockChunk(id)
 	if chunk != nil {
+		old := chunk.Block(id)
 		if tp != 0 {
 			chunk.add(id, tp)
 		} else {
 			chunk.del(id)
 		}
+		w.updateBlockLight(id, old, tp)
 	}
 	store.UpdateBlock(id, tp)
+}
+
+// updateBlockLight incrementally repairs lighting after the block at id changed
+// from oldTp to newTp. Only a change in opacity affects light. The block change
+// must already be applied so blocksLight(id) reflects newTp.
+func (w *World) updateBlockLight(id Vec3, oldTp, newTp int) {
+	if id.Y < 0 || id.Y >= WorldHeight {
+		return
+	}
+	wasOpaque := aoOccludes(oldTp)
+	nowOpaque := aoOccludes(newTp)
+	if wasOpaque == nowOpaque {
+		return
+	}
+	w.lightMu.Lock()
+	defer w.lightMu.Unlock()
+	touched := make(map[Vec3]bool)
+	if nowOpaque {
+		lightPlaceBlock(w, id, touched)
+	} else {
+		lightRemoveBlock(w, id, WorldHeight-1, touched)
+	}
+	w.markLightDirty(touched)
 }
 
 func IsPlant(tp int) bool {
@@ -223,6 +375,7 @@ func (w *World) Chunk(id Vec3) *Chunk {
 		store.UpdateBlock(bid, w)
 	})
 	w.storeChunk(id, chunk)
+	w.seedChunkLight(chunk)
 	return chunk
 }
 
