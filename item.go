@@ -134,10 +134,12 @@ var itemDesc = map[int][6]int{
 	62: {206, 206, 206, 206, 206, 206},
 	63: {207, 207, 207, 207, 207, 207},
 	64: {226, 224, 241, 209, 227, 225},
-	// Torch: an emissive light source, rendered as a thin post (yellow tile).
-	blockTorch: {64, 64, 64, 64, 64, 64},
+	// Torch: an emissive light source, rendered as a thin post. The fragment
+	// shader samples the atlas vertically flipped (1-v), so these indices are in
+	// that flipped space: 176 samples the yellow tile, 197 the orange one.
+	blockTorch: {176, 176, 176, 176, 176, 176},
 	// Fire: an emissive, spreading block rendered as a billboard (orange tile).
-	blockFire: {53, 53, 53, 53, 53, 53},
+	blockFire: {197, 197, 197, 197, 197, 197},
 }
 
 var availableItems = []int{
