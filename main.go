@@ -43,6 +43,9 @@ type Game struct {
 	item    int
 	fps     FPS
 
+	fireSim      *FireSim
+	lastFireTick float64
+
 	exclusiveMouse bool
 	closed         bool
 
@@ -88,6 +91,7 @@ func NewGame(w, h int) (*Game, error) {
 	)
 	game = new(Game)
 	game.item = availableItems[0]
+	game.fireSim = newFireSim(time.Now().UnixNano())
 
 	mainthread.Call(func() {
 		win := initGL(w, h)
@@ -132,6 +136,17 @@ func (g *Game) setExclusiveMouse(exclusive bool) {
 	g.exclusiveMouse = exclusive
 }
 
+// setSimBlock changes a block from the fire simulation: it updates lighting and
+// marks the chunk for re-meshing, but does not persist (fire is transient).
+func (g *Game) setSimBlock(pos Vec3, tp int) {
+	old := g.world.Block(pos)
+	if old == tp {
+		return
+	}
+	g.world.setBlockTransient(pos, old, tp)
+	g.dirtyBlock(pos)
+}
+
 func (g *Game) dirtyBlock(id Vec3) {
 	cid := id.Chunkid()
 	g.blockRender.DirtyChunk(cid)
@@ -154,9 +169,14 @@ func (g *Game) onMouseButtonCallback(win *glfw.Window, button glfw.MouseButton, 
 	block, prev := g.world.HitTest(g.camera.Pos(), g.camera.Front())
 	if button == glfw.MouseButton2 && action == glfw.Press {
 		if prev != nil && *prev != head && *prev != foot {
-			g.world.UpdateBlock(*prev, g.item)
-			g.dirtyBlock(*prev)
-			go ClientUpdateBlock(*prev, g.item)
+			if isFire(g.item) {
+				// Fire is a transient simulated block, not a persisted one.
+				g.fireSim.ignite(*prev, g.setSimBlock)
+			} else {
+				g.world.UpdateBlock(*prev, g.item)
+				g.dirtyBlock(*prev)
+				go ClientUpdateBlock(*prev, g.item)
+			}
 		}
 	}
 	if button == glfw.MouseButton1 && action == glfw.Press {
@@ -356,6 +376,12 @@ func (g *Game) Update() {
 		}
 
 		g.handleKeyInput(dt)
+
+		// Advance the fire simulation on its own slower cadence.
+		if now-g.lastFireTick > fireTick {
+			g.fireSim.tick(g.world.Block, g.setSimBlock)
+			g.lastFireTick = now
+		}
 
 		// Clear to the horizon sky colour (a fallback under the sky pass) so the
 		// horizon matches the time of day.

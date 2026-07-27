@@ -8,8 +8,11 @@ const torchLight = 14
 
 // blockEmission returns the block-light level a block type emits (0 if none).
 func blockEmission(tp int) uint8 {
-	if tp == blockTorch {
+	switch tp {
+	case blockTorch:
 		return torchLight
+	case blockFire:
+		return fireLight
 	}
 	return 0
 }

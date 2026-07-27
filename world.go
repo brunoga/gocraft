@@ -287,6 +287,21 @@ func (w *World) BlockChunk(block Vec3) *Chunk {
 	return chunk
 }
 
+// setBlockTransient changes a block and updates lighting WITHOUT persisting to
+// the store, for transient simulation changes (fire) that shouldn't be saved.
+func (w *World) setBlockTransient(pos Vec3, old, tp int) {
+	chunk := w.BlockChunk(pos)
+	if chunk == nil {
+		return
+	}
+	if tp != 0 {
+		chunk.add(pos, tp)
+	} else {
+		chunk.del(pos)
+	}
+	w.updateBlockLight(pos, old, tp)
+}
+
 func (w *World) UpdateBlock(id Vec3, tp int) {
 	chunk := w.BlockChunk(id)
 	if chunk != nil {
@@ -340,7 +355,7 @@ func IsPlant(tp int) bool {
 }
 
 func IsTransparent(tp int) bool {
-	if IsPlant(tp) || isTorch(tp) {
+	if IsPlant(tp) || isTorch(tp) || isFire(tp) {
 		return true
 	}
 	switch tp {
@@ -359,7 +374,7 @@ func aoOccludes(tp int) bool {
 }
 
 func IsObstacle(tp int) bool {
-	if IsPlant(tp) || isTorch(tp) {
+	if IsPlant(tp) || isTorch(tp) || isFire(tp) {
 		return false
 	}
 	switch tp {
