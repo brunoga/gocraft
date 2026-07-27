@@ -20,6 +20,8 @@ import (
 var (
 	pprofPort = flag.String("pprof", "", "http pprof port")
 
+	fullscreenSize = flag.String("fs", "", "fullscreen resolution as WxH (e.g. 1920x1080); empty uses the desktop resolution")
+
 	game *Game
 )
 
@@ -42,6 +44,14 @@ type Game struct {
 
 	exclusiveMouse bool
 	closed         bool
+
+	// Fullscreen state. When toggling back to windowed we restore the window
+	// to the geometry saved in windowed*. The geometry is captured only once
+	// (windowedSaved): re-reading it on every toggle would feed back the window
+	// manager's decoration adjustments and shrink the window a little each time.
+	fullscreen                                 bool
+	windowedSaved                              bool
+	windowedX, windowedY, windowedW, windowedH int
 }
 
 func initGL(w, h int) *glfw.Window {
@@ -175,6 +185,11 @@ func (g *Game) onKeyCallback(win *glfw.Window, key glfw.Key, scancode int, actio
 		return
 	}
 	switch key {
+	case glfw.KeyF:
+		// Alt+F toggles fullscreen.
+		if mods&glfw.ModAlt != 0 {
+			g.toggleFullscreen()
+		}
 	case glfw.KeyTab:
 		g.camera.FlipFlying()
 	case glfw.KeySpace:
@@ -194,6 +209,62 @@ func (g *Game) onKeyCallback(win *glfw.Window, key glfw.Key, scancode int, actio
 		g.item = availableItems[g.itemidx]
 		g.blockRender.UpdateItem(g.item)
 	}
+}
+
+// toggleFullscreen switches the window between windowed and fullscreen mode.
+// It runs on the main thread (invoked from the GLFW key callback during
+// PollEvents), so it can call GLFW window functions directly.
+func (g *Game) toggleFullscreen() {
+	if g.fullscreen {
+		// Restore the previously saved windowed geometry.
+		g.win.SetMonitor(nil, g.windowedX, g.windowedY, g.windowedW, g.windowedH, 0)
+		g.fullscreen = false
+		return
+	}
+
+	monitor := glfw.GetPrimaryMonitor()
+	if monitor == nil {
+		log.Print("fullscreen: no monitor available")
+		return
+	}
+	mode := monitor.GetVideoMode()
+	if mode == nil {
+		log.Print("fullscreen: could not query video mode")
+		return
+	}
+
+	// Default to the desktop resolution and refresh rate; override the size
+	// if a valid -fs resolution was provided.
+	width, height, refresh := mode.Width, mode.Height, mode.RefreshRate
+	if *fullscreenSize != "" {
+		if w, h, ok := parseResolution(*fullscreenSize); ok {
+			width, height = w, h
+		} else {
+			log.Printf("fullscreen: invalid -fs value %q, using desktop resolution", *fullscreenSize)
+		}
+	}
+
+	// Remember the windowed geometry the first time so we can return to it
+	// later. Capturing it only once avoids accumulating window-manager
+	// decoration drift across repeated toggles.
+	if !g.windowedSaved {
+		g.windowedX, g.windowedY = g.win.GetPos()
+		g.windowedW, g.windowedH = g.win.GetSize()
+		g.windowedSaved = true
+	}
+
+	g.win.SetMonitor(monitor, 0, 0, width, height, refresh)
+	g.fullscreen = true
+}
+
+// parseResolution parses a "WxH" string (e.g. "1920x1080") into positive
+// dimensions. ok is false if the string is malformed or non-positive.
+func parseResolution(s string) (w, h int, ok bool) {
+	n, err := fmt.Sscanf(s, "%dx%d", &w, &h)
+	if err != nil || n != 2 || w <= 0 || h <= 0 {
+		return 0, 0, false
+	}
+	return w, h, true
 }
 
 func (g *Game) handleKeyInput(dt float64) {
