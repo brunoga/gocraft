@@ -36,6 +36,7 @@ type Game struct {
 	blockRender  *BlockRender
 	lineRender   *LineRender
 	playerRender *PlayerRender
+	skyRender    *SkyRender
 
 	world   *World
 	itemidx int
@@ -110,6 +111,10 @@ func NewGame(w, h int) (*Game, error) {
 		return nil, err
 	}
 	game.playerRender, err = NewPlayerRender()
+	if err != nil {
+		return nil, err
+	}
+	game.skyRender, err = NewSkyRender()
 	if err != nil {
 		return nil, err
 	}
@@ -352,10 +357,19 @@ func (g *Game) Update() {
 
 		g.handleKeyInput(dt)
 
-		// Clear to the current sky colour so the horizon matches the time of day.
+		// Clear to the horizon sky colour (a fallback under the sky pass) so the
+		// horizon matches the time of day.
 		sky := gameClock.SkyColor(now)
 		gl.ClearColor(sky.X(), sky.Y(), sky.Z(), 1)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+		// Sky (gradient + sun + moon) fills the background before the terrain.
+		g.skyRender.Draw(
+			g.blockRender.get3dmat().Inv(),
+			g.camera.Pos(),
+			gameClock.SunDir(now),
+			gameClock.Daylight(now),
+		)
 
 		g.blockRender.Draw()
 		g.lineRender.Draw()

@@ -20,4 +20,10 @@ var (
 
 	//go:embed player.frag
 	playerFragmentSource string
+
+	//go:embed sky.vert
+	skyVertexSource string
+
+	//go:embed sky.frag
+	skyFragmentSource string
 )
