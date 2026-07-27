@@ -68,30 +68,26 @@ func newSmokeGL() (*SmokeRender, error) {
 	return r, nil
 }
 
-// fill packs the live particles into r.buf as interleaved point-sprite vertices,
-// computing each particle's current size (grows over its life) and opacity.
-func (r *SmokeRender) fill(sys *SmokeSystem) int {
-	need := len(sys.particles) * smokeFloatsPerParticle
+// fill packs renderable puffs into r.buf as interleaved point-sprite vertices.
+func (r *SmokeRender) fill(points []smokePoint) int {
+	need := len(points) * smokeFloatsPerParticle
 	if cap(r.buf) < need {
 		r.buf = make([]float32, 0, need)
 	}
 	r.buf = r.buf[:0]
-	for i := range sys.particles {
-		p := &sys.particles[i]
-		frac := p.age / p.life
-		size := smokeStartSize + (smokeEndSize-smokeStartSize)*frac
-		alpha := smokeFade(frac)
-		r.buf = append(r.buf, p.pos[0], p.pos[1], p.pos[2], size, alpha)
+	for _, p := range points {
+		r.buf = append(r.buf, p.pos[0], p.pos[1], p.pos[2], p.size, p.alpha)
 	}
-	return len(sys.particles)
+	return len(points)
 }
 
-// Draw renders the system's particles. mat is the view-projection matrix, scale
-// is viewport_height/(2*tan(fov/2)) for perspective sizing, and daylight (0..1)
-// dims the smoke at night. It blends over the scene without writing depth, so
-// particles layer softly over terrain and each other.
-func (r *SmokeRender) Draw(sys *SmokeSystem, mat mgl32.Mat4, scale, daylight float32) {
-	n := r.fill(sys)
+// Draw renders a set of smoke puffs (from either smoke system). mat is the
+// view-projection matrix, scale is viewport_height/(2*tan(fov/2)) for
+// perspective sizing, and daylight (0..1) dims the smoke at night. It blends
+// over the scene without writing depth, so puffs layer softly over terrain and
+// each other.
+func (r *SmokeRender) Draw(points []smokePoint, mat mgl32.Mat4, scale, daylight float32) {
+	n := r.fill(points)
 	if n == 0 {
 		return
 	}

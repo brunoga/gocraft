@@ -48,12 +48,19 @@ type Game struct {
 	fireSim      *FireSim
 	lastFireTick float64
 
-	// Particle smoke rising from fires and torches. smokeSources is refreshed
-	// on a throttled cadence (scanning nearby chunks is not free) and reused as
-	// the emitter set every frame.
+	// Smoke rising from fires and torches. Two interchangeable implementations
+	// share one emitter set (smokeSources, refreshed on a throttled cadence) and
+	// one renderer, and smokeMode selects which is simulated and drawn so the two
+	// can be compared live (toggle with G):
+	//   - smoke:    GPU particle puffs (per-frame step).
+	//   - volSmoke: a cellular density grid (stepped on volTick).
 	smoke         *SmokeSystem
+	volSmoke      *VolumetricSmoke
+	smokeMode     int
 	smokeSources  []mgl32.Vec3
+	smokePoints   []smokePoint // scratch, reused each frame
 	lastSmokeScan float64
+	lastVolTick   float64
 
 	exclusiveMouse bool
 	closed         bool
@@ -102,6 +109,7 @@ func NewGame(w, h int) (*Game, error) {
 	game.item = availableItems[0]
 	game.fireSim = newFireSim(time.Now().UnixNano())
 	game.smoke = newSmokeSystem(time.Now().UnixNano())
+	game.volSmoke = newVolumetricSmoke()
 
 	mainthread.Call(func() {
 		win := initGL(w, h)
@@ -165,6 +173,52 @@ func (g *Game) setSimBlock(pos Vec3, tp int) {
 // chunks for torches is not free, so it runs on this slower cadence, not every
 // frame; the cached sources drive the per-frame particle sim in between.
 const smokeScanTick = 0.4
+
+// Smoke rendering methods, cycled with G.
+const (
+	smokeModeParticles  = iota // GPU particle puffs
+	smokeModeVolumetric        // cellular density grid
+	smokeModeCount
+)
+
+func smokeModeName(m int) string {
+	if m == smokeModeVolumetric {
+		return "volumetric"
+	}
+	return "particles"
+}
+
+// toggleSmokeMode switches between the smoke implementations and clears the one
+// being turned off so its state doesn't linger frozen on screen.
+func (g *Game) toggleSmokeMode() {
+	g.smokeMode = (g.smokeMode + 1) % smokeModeCount
+	switch g.smokeMode {
+	case smokeModeVolumetric:
+		g.smoke = newSmokeSystem(time.Now().UnixNano())
+	case smokeModeParticles:
+		g.volSmoke = newVolumetricSmoke()
+	}
+	log.Printf("smoke method: %s", smokeModeName(g.smokeMode))
+}
+
+// activeSmokePoints steps the active smoke system and returns its renderable
+// puffs (reusing g.smokePoints as scratch).
+func (g *Game) activeSmokePoints(now float64, dt float64) []smokePoint {
+	pts := g.smokePoints[:0]
+	switch g.smokeMode {
+	case smokeModeVolumetric:
+		if now-g.lastVolTick > volTick {
+			g.volSmoke.Step(g.smokeSources)
+			g.lastVolTick = now
+		}
+		pts = g.volSmoke.appendPoints(pts)
+	default:
+		g.smoke.Step(g.smokeSources, float32(dt))
+		pts = g.smoke.appendPoints(pts)
+	}
+	g.smokePoints = pts
+	return pts
+}
 
 // refreshSmokeSources rebuilds the list of smoke emitters: every active fire
 // cell (positions are exact and free from the fire sim) plus every torch in the
@@ -271,6 +325,9 @@ func (g *Game) onKeyCallback(win *glfw.Window, key glfw.Key, scancode int, actio
 		// O toggles ambient occlusion.
 		on := g.blockRender.ToggleAO()
 		log.Printf("ambient occlusion: %v", on)
+	case glfw.KeyG:
+		// G cycles the smoke rendering method so the two can be compared live.
+		g.toggleSmokeMode()
 	case glfw.KeyTab:
 		g.camera.FlipFlying()
 	case glfw.KeySpace:
@@ -405,8 +462,8 @@ func (g *Game) renderStat() {
 	p := g.camera.Pos()
 	cid := NearBlock(p).Chunkid()
 	stat := g.blockRender.Stat()
-	title := fmt.Sprintf("[%.2f %.2f %.2f] %v [%d/%d %d] %d", p.X(), p.Y(), p.Z(),
-		cid, stat.RendingChunks, stat.CacheChunks, stat.Faces, g.fps.Fps())
+	title := fmt.Sprintf("[%.2f %.2f %.2f] %v [%d/%d %d] %d fps | smoke:%s (G)", p.X(), p.Y(), p.Z(),
+		cid, stat.RendingChunks, stat.CacheChunks, stat.Faces, g.fps.Fps(), smokeModeName(g.smokeMode))
 	g.win.SetTitle(title)
 }
 
@@ -436,12 +493,12 @@ func (g *Game) Update() {
 		}
 
 		// Smoke: refresh the emitter set on a throttled cadence, then advance the
-		// particle simulation every frame using the cached sources.
+		// active smoke system (particles or volumetric) using the cached sources.
 		if now-g.lastSmokeScan > smokeScanTick {
 			g.refreshSmokeSources()
 			g.lastSmokeScan = now
 		}
-		g.smoke.Step(g.smokeSources, float32(dt))
+		smokePts := g.activeSmokePoints(now, dt)
 
 		// Clear to the horizon sky colour (a fallback under the sky pass) so the
 		// horizon matches the time of day.
@@ -462,7 +519,7 @@ func (g *Game) Update() {
 		g.playerRender.Draw()
 
 		// Smoke blends over the terrain and players, so it draws last.
-		g.smokeRender.Draw(g.smoke, g.blockRender.get3dmat(), g.smokeScale(), gameClock.Daylight(now))
+		g.smokeRender.Draw(smokePts, g.blockRender.get3dmat(), g.smokeScale(), gameClock.Daylight(now))
 
 		g.renderStat()
 
