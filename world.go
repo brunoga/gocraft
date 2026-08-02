@@ -481,73 +481,57 @@ func (w *World) Chunks(ids []Vec3) []*Chunk {
 	return chunks
 }
 
+// makeChunkMap generates one chunk's blocks by sampling the procedural
+// generator in worldgen.go: layered terrain (surface/dirt/stone) carved by cave
+// tunnels, flowers on open grass, forests whose canopies span chunk seams, and a
+// high cloud layer. Everything it writes stays within this chunk's column so
+// chunk.add never sees a foreign block.
 func makeChunkMap(cid Vec3) map[Vec3]int {
-	const (
-		grassBlock = 1
-		sandBlock  = 2
-		grass      = 17
-		leaves     = 15
-		wood       = 5
-	)
 	m := make(map[Vec3]int)
-	p, q := cid.X, cid.Z
+	x0, z0 := cid.X*ChunkWidth, cid.Z*ChunkWidth
+
 	for dx := 0; dx < ChunkWidth; dx++ {
 		for dz := 0; dz < ChunkWidth; dz++ {
-			x, z := p*ChunkWidth+dx, q*ChunkWidth+dz
-			f := noise2(float32(x)*0.01, float32(z)*0.01, 4, 0.5, 2)
-			g := noise2(float32(-x)*0.01, float32(-z)*0.01, 2, 0.9, 2)
-			mh := int(g*32 + 16)
-			h := int(f * float32(mh))
-			w := grassBlock
-			if h <= 12 {
-				h = 12
-				w = sandBlock
-			}
-			// grass and sand
-			for y := 0; y < h; y++ {
-				m[Vec3{x, y, z}] = w
+			x, z := x0+dx, z0+dz
+			surfaceY := terrainHeight(x, z)
+
+			// Solid column from the floor up to the surface, hollowed by caves.
+			for y := 0; y <= surfaceY; y++ {
+				if caveCarved(x, y, z) && y < surfaceY {
+					continue // leave air; keep the very top block as a crust
+				}
+				m[Vec3{x, y, z}] = columnBlock(x, z, y, surfaceY)
 			}
 
-			// flowers
-			if w == grassBlock {
-				if noise2(-float32(x)*0.1, float32(z)*0.1, 4, 0.8, 2) > 0.6 {
-					m[Vec3{x, h, z}] = grass
-				}
-				if noise2(float32(x)*0.05, float32(-z)*0.05, 4, 0.8, 2) > 0.7 {
-					w := 18 + int(noise2(float32(x)*0.1, float32(z)*0.1, 4, 0.8, 2)*7)
-					m[Vec3{x, h, z}] = w
+			// Flowers and tufts of grass on open ground.
+			if surf, _ := surfaceBlocks(x, z, surfaceY); surf == genGrass {
+				if noise2(-float32(x)*0.1, float32(z)*0.1, 4, 0.8, 2) > 0.62 {
+					m[Vec3{x, surfaceY + 1, z}] = 17
+				} else if noise2(float32(x)*0.05, float32(-z)*0.05, 4, 0.8, 2) > 0.72 {
+					m[Vec3{x, surfaceY + 1, z}] = 18 + int(noise2(float32(x)*0.1, float32(z)*0.1, 4, 0.8, 2)*7)
 				}
 			}
 
-			// tree
-			if w == 1 {
-				ok := true
-				if dx-4 < 0 || dz-4 < 0 ||
-					dx+4 > ChunkWidth || dz+4 > ChunkWidth {
-					ok = false
-				}
-				if ok && noise2(float32(x), float32(z), 6, 0.5, 2) > 0.79 {
-					for y := h + 3; y < h+8; y++ {
-						for ox := -3; ox <= 3; ox++ {
-							for oz := -3; oz <= 3; oz++ {
-								d := ox*ox + oz*oz + (y-h-4)*(y-h-4)
-								if d < 11 {
-									m[Vec3{x + ox, y, z + oz}] = leaves
-								}
-							}
-						}
-					}
-					for y := h; y < h+7; y++ {
-						m[Vec3{x, y, z}] = wood
-					}
+			// Clouds drifting well above the peaks.
+			for y := genCloudLow; y < genCloudHigh; y++ {
+				if noise3(float32(x)*0.01, float32(y)*0.1, float32(z)*0.01, 8, 0.5, 2) > 0.70 {
+					m[Vec3{x, y, z}] = genCloud
 				}
 			}
+		}
+	}
 
-			// cloud
-			for y := 64; y < 72; y++ {
-				if noise3(float32(x)*0.01, float32(y)*0.1, float32(z)*0.01, 8, 0.5, 2) > 0.69 {
-					m[Vec3{x, y, z}] = 16
-				}
+	// Trees: scan every tree cell that could reach into this chunk (a canopy
+	// extends up to treeCell blocks past a seam) and stamp the parts that land
+	// here. Neighbouring chunks stamp the rest, so trees cross seams cleanly.
+	cxLo := floorDiv(x0-treeCell, treeCell)
+	cxHi := floorDiv(x0+ChunkWidth+treeCell, treeCell)
+	czLo := floorDiv(z0-treeCell, treeCell)
+	czHi := floorDiv(z0+ChunkWidth+treeCell, treeCell)
+	for cx := cxLo; cx <= cxHi; cx++ {
+		for cz := czLo; cz <= czHi; cz++ {
+			if t, ok := treeInCell(cx, cz); ok {
+				addTree(m, t, x0, z0)
 			}
 		}
 	}

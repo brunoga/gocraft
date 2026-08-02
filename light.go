@@ -11,10 +11,11 @@ package main
 
 const MaxLight = 15
 
-// WorldHeight bounds the vertical range that carries per-voxel light. Terrain,
-// trees and clouds all sit well below this; cells at or above it are treated as
-// open sky (fully lit).
-const WorldHeight = 128
+// WorldHeight bounds the vertical range that carries per-voxel light. Terrain
+// (up to snow-capped mountain peaks), trees and clouds all sit well below this;
+// cells at or above it are treated as open sky (fully lit). It is tall enough to
+// give mountain ridges dramatic relief and still float clouds above them.
+const WorldHeight = 256
 
 // lightGrid is the storage the propagation algorithms read and write.
 type lightGrid interface {

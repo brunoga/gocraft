@@ -92,7 +92,9 @@ func (s *Store) UpdatePlayerState(state PlayerState) error {
 
 func (s *Store) GetPlayerState() PlayerState {
 	var state PlayerState
-	state.Y = 16
+	// Default spawn sits just above the generated surface at the origin so a
+	// fresh player lands on the ground instead of inside a hill or in mid-air.
+	state.Y = float32(terrainHeight(0, 0)) + 3
 	s.db.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket(cameraBucket)
 		value := bkt.Get(cameraBucket)
